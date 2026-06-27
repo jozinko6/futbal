@@ -45,7 +45,7 @@ describe('strict — input', () => {
     const inputWithPass = press({ moveX: 1, pass: true });
     stepMulti(s, [inputWithPass], FIXED_DT);
     // Pass should have been processed — ball should be in PASS mode or kicked.
-    const ballKicked = s.ball.mode === 'PASS' || s.ball.mode === 'FREE' || Math.hypot(s.ball.vx, s.ball.vy) > 0;
+    const ballKicked = (s.ball.mode as string) === 'PASS' || (s.ball.mode as string) === 'FREE' || Math.hypot(s.ball.vx, s.ball.vy) > 0;
     expect(ballKicked).toBe(true);
   });
 
