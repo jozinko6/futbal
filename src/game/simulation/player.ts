@@ -241,7 +241,13 @@ export function resolvePlayerCollision(a: PlayerEntity, b: PlayerEntity): void {
  *  Possession is only assigned when the ball is FREE/PASS/SHOT/AERIAL. */
 export function resolvePossession(state: MatchState): void {
   const ball = state.ball;
-  if (ball.releaseCooldown > 0) return;
+  if (ball.releaseCooldown > 0) {
+    // During release cooldown, also fix any stale CONTROLLED mode.
+    if (ball.mode === 'CONTROLLED' && ball.ownerId == null) {
+      setBallOwner(state, null, 'FREE');
+    }
+    return;
+  }
 
   // If already controlled, keep the current owner — do NOT reassign.
   if (ball.mode === 'CONTROLLED' || ball.mode === 'GK_HELD') {
