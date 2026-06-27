@@ -226,17 +226,64 @@ export class NetClient {
 
   /**
    * Render-time interpolation: returns a state whose remote entities are
-   * interpolated to INTERP_DELAY seconds in the past. For our MVP we simply
-   * return the latest authoritative state (the sim already updates at 60Hz).
+   * interpolated ~INTERP_DELAY (100 ms) in the past, from the snapshot buffer.
+   * The local player uses prediction (this.state), so this is mainly for the
+   * remote team and the ball. Falls back to the latest state if the buffer is
+   * too short.
    */
   interpolatedState(): MatchState | null {
-    return this.state;
+    if (!this.state) return null;
+    if (this.snapshots.length < 2) return this.state;
+    const now = performance.now();
+    const renderTime = now - INTERP_DELAY * 1000;
+    // Find the two snapshots bracketing renderTime.
+    let a = this.snapshots[0];
+    let b = this.snapshots[this.snapshots.length - 1];
+    for (let i = 0; i < this.snapshots.length - 1; i++) {
+      if (this.snapshots[i].receivedAt <= renderTime && this.snapshots[i + 1].receivedAt >= renderTime) {
+        a = this.snapshots[i];
+        b = this.snapshots[i + 1];
+        break;
+      }
+    }
+    if (a === b) return a.state;
+    const span = b.receivedAt - a.receivedAt;
+    const t = span > 0 ? (renderTime - a.receivedAt) / span : 0;
+    const tt = Math.max(0, Math.min(1, t));
+    // Interpolate ball + players x/y/facing.
+    const interp = JSON.parse(JSON.stringify(a.state)) as MatchState;
+    interp.ball.x = lerp(a.state.ball.x, b.state.ball.x, tt);
+    interp.ball.y = lerp(a.state.ball.y, b.state.ball.y, tt);
+    interp.ball.z = lerp(a.state.ball.z, b.state.ball.z, tt);
+    for (let i = 0; i < interp.players.length && i < b.state.players.length; i++) {
+      interp.players[i].x = lerp(a.state.players[i].x, b.state.players[i].x, tt);
+      interp.players[i].y = lerp(a.state.players[i].y, b.state.players[i].y, tt);
+      interp.players[i].facing = lerpAngle(a.state.players[i].facing, b.state.players[i].facing, tt);
+    }
+    // Use the newer score/time/period (non-interpolated).
+    interp.score = b.state.score;
+    interp.timeMs = b.state.timeMs;
+    interp.period = b.state.period;
+    return interp;
+  }
+
+  /** Attempt to reconnect to a room with a stored reconnectToken. */
+  reconnectRoom(code: string, reconnectToken: string, cb: (ok: boolean) => void): void {
+    this.socket.emit('reconnect', { code, reconnectToken }, (res: { ok: boolean }) => cb(res.ok));
   }
 
   destroy() {
     this.socket.removeAllListeners();
     this.socket.disconnect();
   }
+}
+
+function lerp(a: number, b: number, t: number): number { return a + (b - a) * t; }
+function lerpAngle(a: number, b: number, t: number): number {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return a + d * t;
 }
 
 export { INTERP_DELAY };
