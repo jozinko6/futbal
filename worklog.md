@@ -150,3 +150,48 @@ Stage Summary:
   pauza/rematch. Verifikované s dvoma browser sessions.
 - Server sa spúšťa: cd mini-services/game-server && bun run dev (na pozadí beží).
 - Dokumentácia aktualizovaná (README, docs/PROGRESS.md, docs/ARCHITECTURE.md).
+
+---
+Task ID: 9
+Agent: main
+Task: Opraviť múchy: výkop sa nerozbehne, rýchlosť hráčov, throw-in, rohové kopy, realistickejší pohyb
+
+Work Log:
+- **Výkop**: setupKickoff teraz priradí loptu kickoff tímu (MID) priamo + restartTimer
+  znížený na 0.6s. Hra sa rozbehne okamžite — AI rozohrá (dribble/pass) bez čakania.
+  Overené: po 1s period=play, owner=MID, shield aktívny; po 5s lopta sa hýbe.
+- **Rýchlosť hráčov**: PLAYER_MAX_SPEED 132→96, SPRINT 186→138, ACCEL 760→520,
+  DECEL 1100→760, GK 104→78. SLIDE_SPEED 250→190. DRIBBLE_NUDGE 132→56.
+  BALL_PASS 360→300, HIGH_PASS 300→250, SHOOT 380-560→340-520. formation.ts
+  používa konštanty (nie hardcoded).
+- **Possession shield (nové)**: BallState.possessionShield + shieldTeam. Po
+  restart (kickoff/throwIn/corner/freeKick/goalKick) sa nastaví POSSESSION_SHIELD=1.4s
+  pre restart tím. tryTackle + resolvePossession rešpektujú shield — protihráč
+  nemôže zobrať loptu počas shieldu. Shield sa tickuje v stepMulti nezávisle
+  (bugfix: dribble nevolá integrateBall, takže shield by sa inak netickoval).
+- **Throw-in / corner**: processFieldEvents nedáva loptu priamo hráčovi
+  (givePossessionAt odstránené). Namiesto toho moveNearestToBall presunie
+  najbližšieho hráča restart tímu ~22px od lopty; lopta ostáva voľná, shield
+  chráni. Hráč prijde (AI 'receive') a rozohrá — real throw-in namiesto
+  okamžitého hand-off. Goal kick stále priradí GK (rozohráva).
+- **Realistickejší pohyb**: turn rate závisí od rýchlosti (6-12 rad/s namiesto
+  fixných 14) — pomalšie otáčanie pri nízkych rýchlostiach. Znížená akcelerácia
+  = plynulejšie rozbehy a zastavenia.
+- **Bugfix**: pass()/shoot() v player.ts používajú konštanty (BALL_PASS_SPEED,
+  BALL_HIGH_PASS_SPEED/Z, BALL_SHOOT_MIN/MAX) namiesto hardcoded hodnôt.
+- **Testy**: 23/23 Vitest (pridané 3 restart shield testy: throw-in shield,
+  corner shield, opponents nemôžu ukradnúť počas shieldu). Bounce test
+  upravený (izoluje loptu od hráčov). tsc čistý, lint OK.
+- **Verifikácia v browseri**:
+  * Výkop: po 1s period=play, owner=MID(id3), shield=0.35 (odpočítava); po 5s
+    shield=0, lopta sa hýbe (616→840), score 0-0.
+  * Po 30s: score 1-0, time=37s, restartType=kickoff (gól padol), žiadne chyby.
+  * VLM: skóre 1-1, čas 0:20, ihrisko s čiarami, hráči rozmiestnení, žiadne
+    vizuálne problémy.
+
+Stage Summary:
+- Výkop sa rozbehne automaticky (AI rozohrá, shield chráni).
+- Hráči pomalší (96/138 px/s), realistickejšie otáčanie a akcelerácia.
+- Throw-in/corner: lopta voľná, shield chráni restart tím, hráč prijde a rozohrá.
+- Rohové kopy fungujú (corner s shieldom).
+- 23/23 testov passing, tsc/lint čistý.

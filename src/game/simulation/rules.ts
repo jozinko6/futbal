@@ -20,6 +20,7 @@ import {
   OFFSIDE_BANNER,
   OFFSIDE_ENABLED,
   OFFSIDE_TOLERANCE,
+  POSSESSION_SHIELD,
   RESTART_SETUP_TIME,
 } from './constants';
 import type { MatchState, PlayerEntity, RestartType, Team } from './types';
@@ -125,6 +126,15 @@ export function setupRestart(state: MatchState, type: RestartType, team: Team): 
   ball.ownerId = null;
   ball.releaseCooldown = 0.1;
   ball.z = 0;
+  // Restart teams get a brief possession shield so opponents can't instantly
+  // steal the ball before the restart team has touched it.
+  if (type === 'kickoff' || type === 'throwIn' || type === 'corner' || type === 'freeKick' || type === 'goalKick') {
+    ball.possessionShield = POSSESSION_SHIELD;
+    ball.shieldTeam = team;
+  } else {
+    ball.possessionShield = 0;
+    ball.shieldTeam = null;
+  }
 
   switch (type) {
     case 'kickoff':
@@ -175,6 +185,20 @@ export function setupKickoff(state: MatchState, team: Team): void {
   state.bannerTimer = KICKOFF_DELAY;
   state.offsideCheck = null;
   setupRestart(state, 'kickoff', team);
+  // Hand the ball to the kicking team's midfielder so play starts immediately
+  // (the AI / human can then pass or dribble). The possession shield protects
+  // them from being instantly stripped.
+  const mid = state.players.find((p) => p.team === team && p.role === 'MID');
+  if (mid) {
+    mid.x = FIELD_CX - (team === 0 ? 16 : -16);
+    mid.y = FIELD_CY;
+    state.ball.ownerId = mid.id;
+    state.ball.x = FIELD_CX;
+    state.ball.y = FIELD_CY;
+    for (const p of state.players) p.hasBall = p.id === mid.id;
+  }
+  // Short kickoff pause so the banner is visible, then live play.
+  state.restartTimer = 0.6;
 }
 
 /** Award a goal and enter the celebration period. */

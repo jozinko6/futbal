@@ -8,7 +8,9 @@ import {
   BALL_FRICTION,
   FIELD_CX,
   FIELD_CY,
+  FIELD_BOTTOM,
   FIELD_RIGHT,
+  FIELD_TOP,
   FIELD_X,
   FIXED_DT,
   GOAL_BOTTOM,
@@ -88,11 +90,20 @@ describe('ball physics at fixed timestep', () => {
 
   it('bounces on the ground losing energy', () => {
     const s = createMatchState({ seed: 4 });
+    s.period = 'play';
     s.ball.ownerId = null;
+    // Place the ball far from any player so resolvePossession can't grab it
+    // before the bounce is observed.
+    s.ball.x = FIELD_X + 20;
+    s.ball.y = FIELD_TOP + 20;
     s.ball.z = 50;
     s.ball.vz = -200;
     s.ball.vx = 0;
     s.ball.vy = 0;
+    for (const p of s.players) {
+      p.x = FIELD_RIGHT - 20;
+      p.y = FIELD_BOTTOM - 20;
+    }
     // Step until it hits the ground.
     let hit = false;
     for (let i = 0; i < 120; i++) {
@@ -356,5 +367,80 @@ describe('offside', () => {
     receiver.y = FIELD_CY;
     pass(passer, receiver.x, receiver.y, s, false);
     expect(isReceiverOffside(s, receiver)).toBe(false);
+  });
+});
+
+describe('restarts with possession shield', () => {
+  it('gives the restart team a shield on throw-in', () => {
+    const s = createMatchState({ seed: 50 });
+    s.period = 'play';
+    s.ball.ownerId = null;
+    s.ball.x = FIELD_CX;
+    s.ball.y = 20; // well above FIELD_TOP (44)
+    s.ball.vx = 0;
+    s.ball.vy = 0;
+    s.ball.z = 0;
+    s.lastTouchTeam = 0; // home put it out -> throw to away
+    // Move players away from the ball so AI doesn't interfere.
+    for (const p of s.players) {
+      p.x = FIELD_X + 20;
+      p.y = FIELD_BOTTOM - 20;
+    }
+    step(s, emptyInput(0), FIXED_DT);
+    // Throw-in awarded to away (team 1) with a shield protecting them.
+    expect(s.restartType).toBe('throwIn');
+    expect(s.restartTeam).toBe(1);
+    expect(s.ball.possessionShield).toBeGreaterThan(0);
+    expect(s.ball.shieldTeam).toBe(1);
+  });
+
+  it('gives the restart team a shield on corner', () => {
+    const s = createMatchState({ seed: 51 });
+    s.period = 'play';
+    s.ball.ownerId = null;
+    // Ball out past the left goal line (home's goal), y between posts but
+    // ABOVE the goal mouth so it's a corner, not a goal.
+    s.ball.x = FIELD_X - 30;
+    s.ball.y = GOAL_TOP - 30;
+    s.ball.z = 0;
+    s.ball.vx = 0;
+    s.ball.vy = 0;
+    s.lastTouchTeam = 0; // home defender put it out -> corner to away
+    for (const p of s.players) {
+      p.x = FIELD_RIGHT - 20;
+      p.y = FIELD_BOTTOM - 20;
+    }
+    step(s, emptyInput(0), FIXED_DT);
+    expect(s.restartType).toBe('corner');
+    expect(s.restartTeam).toBe(1);
+    expect(s.ball.possessionShield).toBeGreaterThan(0);
+    expect(s.ball.shieldTeam).toBe(1);
+  });
+
+  it('opponents cannot steal the ball while the shield is active', () => {
+    const s = createMatchState({ seed: 52 });
+    s.period = 'play';
+    // Simulate a shielded throw-in for team 1.
+    s.ball.ownerId = null;
+    s.ball.x = FIELD_CX;
+    s.ball.y = FIELD_TOP + 6;
+    s.ball.possessionShield = 1.4;
+    s.ball.shieldTeam = 1;
+    s.ball.releaseCooldown = 0;
+    // Place a home player right on the ball.
+    const home = s.players[3];
+    home.team = 0;
+    home.x = s.ball.x;
+    home.y = s.ball.y;
+    home.stunnedTime = 0;
+    // Place an away player nearby too.
+    const away = s.players[8];
+    away.team = 1;
+    away.x = s.ball.x + 10;
+    away.y = s.ball.y;
+    away.stunnedTime = 0;
+    step(s, emptyInput(0), FIXED_DT);
+    // Shield blocks the home player; only away may gain possession.
+    expect(s.ball.ownerId).not.toBe(home.id);
   });
 });

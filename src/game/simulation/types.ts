@@ -39,6 +39,12 @@ export interface BallState {
   ownerId: number | null;
   /** Cooldown before a passer can re-gain the ball (avoids instant re-grab). */
   releaseCooldown: number;
+  /** Possession shield: while > 0, only `shieldTeam` may gain/tackle the ball.
+   *  Set after a restart (kickoff/throw-in/corner/free-kick) so the restart
+   *  team gets a moment to play the ball without being instantly stripped. */
+  possessionShield: number;
+  /** Team protected by the possession shield (0, 1, or null). */
+  shieldTeam: Team | null;
 }
 
 export interface PlayerEntity {

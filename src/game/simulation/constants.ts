@@ -68,24 +68,27 @@ export const OFFSIDE_BANNER = 'OFSAJD';
 export const PLAYER_RADIUS = 9;
 export const PLAYERS_PER_TEAM = 5;
 
-export const PLAYER_MAX_SPEED = 132; // px/s walk/run
-export const PLAYER_SPRINT_SPEED = 186;
-export const PLAYER_ACCEL = 760;
-export const PLAYER_DECEL = 1100;
-export const GK_MAX_SPEED = 104;
+export const PLAYER_MAX_SPEED = 96; // px/s walk/run
+export const PLAYER_SPRINT_SPEED = 138;
+export const PLAYER_ACCEL = 520;
+export const PLAYER_DECEL = 760;
+export const GK_MAX_SPEED = 78;
 
 /** Range at which a player can control/dribble the ball. */
 export const CONTROL_RADIUS = 18;
 /** Range at which a tackle attempt can win the ball. */
 export const TACKLE_RADIUS = 20;
 /** Slide tackle dash speed. */
-export const SLIDE_SPEED = 250;
+export const SLIDE_SPEED = 190;
 export const SLIDE_DURATION = 0.32; // s
 export const SLIDE_COOLDOWN = 0.9; // s
 /** Stun duration after being dispossessed. */
 export const STUN_DURATION = 0.7;
 /** Recovery after a missed slide. */
 export const SLIDE_RECOVER = 0.45;
+/** Time after a restart (kickoff/throw-in/corner/free-kick) during which the
+ *  restart team's possession is protected — opponents cannot tackle/steal. */
+export const POSSESSION_SHIELD = 1.4;
 
 // --- Ball ---------------------------------------------------------------
 
@@ -96,13 +99,13 @@ export const BALL_AIR_DRAG = 0.12; // per second (applied to horizontal v while 
 export const GRAVITY = 980; // px/s^2 (downward on z)
 export const BOUNCE_RESTITUTION = 0.46;
 export const BALL_REST_THRESHOLD = 28; // below this speed, snaps to rest on bounce
-export const BALL_PASS_SPEED = 360;
-export const BALL_HIGH_PASS_SPEED = 300;
-export const BALL_HIGH_PASS_Z = 150; // initial upward velocity for a lob
-export const BALL_SHOOT_MIN = 380;
-export const BALL_SHOOT_MAX = 560;
+export const BALL_PASS_SPEED = 300;
+export const BALL_HIGH_PASS_SPEED = 250;
+export const BALL_HIGH_PASS_Z = 130; // initial upward velocity for a lob
+export const BALL_SHOOT_MIN = 340;
+export const BALL_SHOOT_MAX = 520;
 export const SHOOT_CHARGE_TIME = 0.7; // s to reach full power
-export const DRIBBLE_NUDGE = 132; // forward nudge while dribbling
+export const DRIBBLE_NUDGE = 56; // forward nudge while dribbling
 
 // --- Match ---------------------------------------------------------------
 

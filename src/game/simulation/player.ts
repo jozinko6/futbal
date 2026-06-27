@@ -3,6 +3,11 @@
  * Pure functions operating on PlayerEntity / MatchState — no DOM.
  */
 import {
+  BALL_HIGH_PASS_SPEED,
+  BALL_HIGH_PASS_Z,
+  BALL_PASS_SPEED,
+  BALL_SHOOT_MAX,
+  BALL_SHOOT_MIN,
   CONTROL_RADIUS,
   DRIBBLE_NUDGE,
   PLAYER_ACCEL,
@@ -51,7 +56,9 @@ export function applyMovement(
     const desiredVy = ny * maxSpeed;
     p.vx = approach(p.vx, desiredVx, PLAYER_ACCEL * dt);
     p.vy = approach(p.vy, desiredVy, PLAYER_ACCEL * dt);
-    p.facing = approachAngle(p.facing, Math.atan2(ny, nx), 14 * dt);
+    // Realistic turn rate: slower at low speed, sharper when moving.
+    const turnRate = 6 + Math.min(6, (Math.hypot(p.vx, p.vy) / maxSpeed) * 6);
+    p.facing = approachAngle(p.facing, Math.atan2(ny, nx), turnRate * dt);
     p.state = sprint && p.role !== 'GK' ? 'sprint' : 'run';
   } else {
     decel(p, dt);
@@ -127,6 +134,10 @@ export function tryTackle(
   state: MatchState,
 ): boolean {
   const ball = state.ball;
+  // Possession shield blocks opponents from stealing right after a restart.
+  if (ball.possessionShield > 0 && ball.shieldTeam != null && ball.shieldTeam !== tackler.team) {
+    return false;
+  }
   // Tackle can dispossess a nearby owner, or simply steal a loose ball.
   const owner = ball.ownerId != null ? state.players[ball.ownerId] : null;
   if (owner && owner.team !== tackler.team && dist(tackler.x, tackler.y, owner.x, owner.y) <= TACKLE_RADIUS) {
@@ -154,6 +165,8 @@ export function resolvePossession(state: MatchState): void {
   for (const p of state.players) {
     if (p.stunnedTime > 0) continue;
     if (p.state === 'tackle' || p.state === 'goalkeeperDive') continue;
+    // Possession shield: only the protected team may pick up a loose ball.
+    if (ball.possessionShield > 0 && ball.shieldTeam != null && p.team !== ball.shieldTeam) continue;
     const d = dist(p.x, p.y, ball.x, ball.y);
     // GKs can catch a low ball within a slightly larger catch radius.
     const reach = p.role === 'GK' ? CONTROL_RADIUS + 4 : CONTROL_RADIUS;
@@ -213,8 +226,8 @@ export function pass(
 ): void {
   const dx = targetX - passer.x;
   const dy = targetY - passer.y;
-  const power = highPass ? 300 : 360;
-  kickBall(state.ball, dx, dy, power, highPass ? 150 : 0);
+  const power = highPass ? BALL_HIGH_PASS_SPEED : BALL_PASS_SPEED;
+  kickBall(state.ball, dx, dy, power, highPass ? BALL_HIGH_PASS_Z : 0);
   passer.hasBall = false;
   passer.state = 'pass';
   passer.actionLock = 0.18;
@@ -239,7 +252,7 @@ export function shoot(
 ): void {
   const dx = targetX - shooter.x;
   const dy = targetY - shooter.y;
-  const power = 380 + charge * (560 - 380);
+  const power = BALL_SHOOT_MIN + charge * (BALL_SHOOT_MAX - BALL_SHOOT_MIN);
   // Slight lift so low shots can still dip — keeps it readable.
   const vz = 30 + charge * 40;
   kickBall(state.ball, dx, dy, power, vz);

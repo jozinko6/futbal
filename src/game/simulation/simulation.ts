@@ -25,7 +25,7 @@ import {
   SHOOT_CHARGE_TIME,
   type Difficulty,
 } from './constants';
-import type { HumanController, InputFrame, MatchState, Team } from './types';
+import type { HumanController, InputFrame, MatchState, PlayerEntity, Team } from './types';
 import { hashSeed, rngCreate } from './rng';
 import { buildPlayers, resetToFormation, teamOf } from './formation';
 import { setupKickoff, setupRestart, awardGoal, awardOffside, checkFieldEvents, isReceiverOffside, resolveGoalPosts } from './rules';
@@ -90,6 +90,8 @@ export function createMatchState(opts: CreateMatchOptions = {}): MatchState {
       spin: 0,
       ownerId: null,
       releaseCooldown: 0,
+      possessionShield: 0,
+      shieldTeam: null,
     },
     players: buildPlayers(),
     controllers,
@@ -336,10 +338,12 @@ function processFieldEvents(state: MatchState): void {
   const team = ev.team;
   if (ev.type === 'throwIn') {
     setupRestart(state, 'throwIn', team);
-    givePossessionAt(state, team, state.ball.x, state.ball.y);
+    // Ball is left loose at the touchline; the restart team (shielded) must
+    // come and play it — a real throw-in rather than an instant hand-off.
+    moveNearestToBall(state, team);
   } else if (ev.type === 'corner') {
     setupRestart(state, 'corner', team);
-    givePossessionAt(state, team, state.ball.x, state.ball.y);
+    moveNearestToBall(state, team);
   } else if (ev.type === 'goalKick') {
     setupRestart(state, 'goalKick', team);
     const gk = state.players.find((p) => p.team === team && p.role === 'GK');
@@ -351,6 +355,33 @@ function processFieldEvents(state: MatchState): void {
   }
   state.banner = ev.type === 'corner' ? 'ROH' : ev.type === 'goalKick' ? 'KOP OD BRÁNY' : 'AUT';
   state.bannerTimer = 1.0;
+}
+
+/** Move the restart team's nearest outfield player toward the restart spot so
+ *  they can play the ball quickly (throw-in / corner). The ball stays loose;
+ *  the possession shield prevents opponents from stealing it first. */
+function moveNearestToBall(state: MatchState, team: Team): void {
+  let best: PlayerEntity | null = null;
+  let bd = Infinity;
+  for (const p of state.players) {
+    if (p.team !== team || p.role === 'GK') continue;
+    const d = dist(p.x, p.y, state.ball.x, state.ball.y);
+    if (d < bd) {
+      bd = d;
+      best = p;
+    }
+  }
+  if (best) {
+    // Place the chosen player a couple of paces from the ball so they have to
+    // step in to collect it (looks like a real restart setup).
+    const dx = best.x - state.ball.x;
+    const dy = best.y - state.ball.y;
+    const d = Math.hypot(dx, dy) || 1;
+    best.x = state.ball.x + (dx / d) * 22;
+    best.y = state.ball.y + (dy / d) * 22;
+    best.vx = 0;
+    best.vy = 0;
+  }
 }
 
 function givePossessionAt(state: MatchState, team: Team, x: number, y: number): void {
@@ -437,6 +468,13 @@ export function stepMulti(state: MatchState, inputs: InputFrame[], dt: number): 
       dribble(state, dt);
     } else {
       integrateBall(state.ball, dt);
+    }
+    // Tick the possession shield every step regardless of ball ownership
+    // (dribble() doesn't run integrateBall, so the shield would otherwise
+    // never expire while the ball is held).
+    if (state.ball.possessionShield > 0) {
+      state.ball.possessionShield = Math.max(0, state.ball.possessionShield - dt);
+      if (state.ball.possessionShield === 0) state.ball.shieldTeam = null;
     }
 
     // 6. Possession, posts, last touch.

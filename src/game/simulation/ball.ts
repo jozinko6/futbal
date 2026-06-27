@@ -65,6 +65,10 @@ export function integrateBall(ball: BallState, dt: number): void {
   ball.spin += Math.hypot(ball.vx, ball.vy) * dt * 0.06;
 
   if (ball.releaseCooldown > 0) ball.releaseCooldown = Math.max(0, ball.releaseCooldown - dt);
+  if (ball.possessionShield > 0) {
+    ball.possessionShield = Math.max(0, ball.possessionShield - dt);
+    if (ball.possessionShield === 0) ball.shieldTeam = null;
+  }
 }
 
 /** True if the ball is low enough to be controllable / to score. */

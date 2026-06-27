@@ -7,6 +7,8 @@ import {
   FIELD_CY,
   FIELD_X,
   FIELD_W,
+  GK_MAX_SPEED,
+  PLAYER_MAX_SPEED,
   PLAYERS_PER_TEAM,
 } from './constants';
 import type { PlayerEntity, PlayerRole, Team } from './types';
@@ -76,7 +78,7 @@ export function makePlayer(
     vx: 0,
     vy: 0,
     facing: team === 0 ? 0 : Math.PI,
-    maxSpeed: role === 'GK' ? 104 : 132,
+    maxSpeed: role === 'GK' ? GK_MAX_SPEED : PLAYER_MAX_SPEED,
     accel: 760,
     state: 'idle',
     slideCooldown: 0,
