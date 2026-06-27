@@ -203,6 +203,8 @@ export interface MatchState {
   debug: boolean;
   /** Presentation events produced during the current tick (drained by renderer). */
   events: import('@/game/presentation/events').PresentationEvent[];
+  /** Aftertouch state — allows post-kick trajectory influence. */
+  aftertouch: import('./aftertouch').AftertouchState | null;
 }
 
 export interface InputFrame {

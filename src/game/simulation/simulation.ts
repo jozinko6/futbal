@@ -31,6 +31,7 @@ import { stepAction } from './actionSystem';
 import { evaluateTackleFoul, recordBallContact, resetContactTrack } from './fouls';
 import { emit } from '@/game/presentation/events';
 import { syncHasBall as syncHasBallState, setBallOwner } from './ownership';
+import { startAftertouch, updateAftertouchInput, applyAftertouch, isAftertouchActive, cancelAftertouch } from './aftertouch';
 import { dist } from './math';
 
 export interface CreateMatchOptions {
@@ -77,6 +78,7 @@ export function createMatchState(opts: CreateMatchOptions = {}): MatchState {
     offsideCheck: null, offsides: [0, 0], shootout: null,
     teamPhase: ['ORGANIZED_DEFENSE', 'ORGANIZED_DEFENSE'], debug: false,
     events: [],
+    aftertouch: null,
   };
   resetToFormation(state.players);
   setupKickoff(state, 0 as Team);
@@ -443,9 +445,12 @@ export function stepMulti(state: MatchState, inputs: InputFrame[], dt: number): 
         if (a.type === 'shortPass' || a.type === 'drivenPass' || a.type === 'throughPass' || a.type === 'lobPass') {
           executePassKick(p, state, a);
           emit(state.events, { type: 'BALL_KICKED', tick: state.tick, x: p.x, y: p.y, power: a.power, kickType: a.type });
+          // Start aftertouch for the kicking player.
+          state.aftertouch = startAftertouch(state, p.id, a.type.toUpperCase().replace('PASS', '_PASS'));
         } else if (a.type === 'placedShot' || a.type === 'powerShot' || a.type === 'lobShot' || a.type === 'firstTimeShot') {
           executeShotKick(p, state, a);
           emit(state.events, { type: 'BALL_KICKED', tick: state.tick, x: p.x, y: p.y, power: a.power, kickType: a.type });
+          state.aftertouch = startAftertouch(state, p.id, a.type.toUpperCase());
         }
       }
     }
@@ -486,8 +491,33 @@ export function stepMulti(state: MatchState, inputs: InputFrame[], dt: number): 
       }
     }
     // 7. Ball.
-    if (state.ball.ownerId != null) dribble(state, dt);
-    else integrateBall(state.ball, dt);
+    if (state.ball.ownerId != null) {
+      dribble(state, dt);
+      // Cancel aftertouch when ball is controlled.
+      cancelAftertouch(state.aftertouch);
+      state.aftertouch = null;
+    } else {
+      integrateBall(state.ball, dt);
+      // Apply aftertouch to the loose ball.
+      if (isAftertouchActive(state.aftertouch, state)) {
+        // Update aftertouch from the source player's input (if human-controlled).
+        const at = state.aftertouch!;
+        if (at.sourcePlayerId != null) {
+          // Find the controller for the source player.
+          for (let ci = 0; ci < state.controllers.length; ci++) {
+            const c = state.controllers[ci];
+            if (c.activeId === at.sourcePlayerId) {
+              const inp = inputs[ci] ?? emptyInput();
+              updateAftertouchInput(at, inp.moveX, inp.moveY, state);
+              break;
+            }
+          }
+        }
+        applyAftertouch(at, state.ball, state, dt);
+      } else if (state.aftertouch && !state.aftertouch.active) {
+        state.aftertouch = null;
+      }
+    }
     if (state.ball.possessionShield > 0) {
       state.ball.possessionShield = Math.max(0, state.ball.possessionShield - dt);
       if (state.ball.possessionShield === 0) state.ball.shieldTeam = null;
