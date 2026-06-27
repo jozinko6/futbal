@@ -14,7 +14,7 @@ import {
 import type { AiAction, MatchState, PlayerEntity, Team, WithBallAction, OffBallAction } from './types';
 import { dist, len, angleTo } from './math';
 import { rngFloat } from './rng';
-import { applyMovement, containMovement, pass, shoot, startTackle, pokeTackle, tryTackle } from './player';
+import { applyMovement, containMovement, pass, shoot, startTackle, pokeTackle, tryTackle, standingTackle, shoulderChallenge } from './player';
 import { attackingGoalX } from './teamTactics';
 import { ownGoalX } from './goalkeeper';
 import { formationSlot, indexInTeam } from './formation';
@@ -305,12 +305,23 @@ export function aiAct(state: MatchState, p: PlayerEntity, dt: number): void {
 
   switch (action) {
     case 'PRESS': {
-      // Move to ball; tackle/poke when close.
+      // Move to ball; use contextual defense when close.
       mx = ball.x - p.x; my = ball.y - p.y;
       const owner = ball.ownerId != null ? state.players[ball.ownerId] : null;
-      if (owner && owner.team !== p.team && dist(p.x, p.y, owner.x, owner.y) < m(1.2)) {
-        if (p.slideCooldown <= 0 && rnd(state, 0, 1) < params.aggression * 0.05) startTackle(p, mx, my);
-        else if (p.pokeCooldown <= 0) pokeTackle(p, state);
+      if (owner && owner.team !== p.team && dist(p.x, p.y, owner.x, owner.y) < m(1.5)) {
+        // Close to ball carrier — standing tackle or shoulder challenge.
+        if (dist(p.x, p.y, owner.x, owner.y) < m(1.2)) {
+          standingTackle(p, state);
+        } else {
+          shoulderChallenge(p, state);
+        }
+        // Slide tackle only on high aggression + right angle.
+        if (p.slideCooldown <= 0 && rnd(state, 0, 1) < params.aggression * 0.03) {
+          startTackle(p, mx, my);
+        }
+      } else if (ball.ownerId == null && dist(p.x, p.y, ball.x, ball.y) < m(1.5)) {
+        // Loose ball — poke tackle.
+        if (p.pokeCooldown <= 0) pokeTackle(p, state);
         else tryTackle(p, state);
       }
       sprint = dist(p.x, p.y, ball.x, ball.y) > m(3);

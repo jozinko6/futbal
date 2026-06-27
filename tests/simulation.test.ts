@@ -423,9 +423,10 @@ describe('free kicks & penalties', () => {
   });
 
   it('indirect free kick cannot score directly (goal kick instead)', () => {
-    const s = createMatchState({ seed: 61 });
+    const s = createMatchState({ seed: 61, halfLength: 60, humanPlayers: 0 });
     s.period = 'play';
     s.ball.ownerId = null;
+    s.ball.mode = 'FREE';
     s.ball.indirect = true;
     s.ball.x = FIELD_X + 6;
     s.ball.y = FIELD_CY;
@@ -433,11 +434,13 @@ describe('free kicks & penalties', () => {
     s.ball.vx = -400;
     s.ball.vy = 0;
     s.lastTouchTeam = 1;
-    for (const p of s.players) {
-      p.x = FIELD_RIGHT - 20;
-      p.y = FIELD_BOTTOM - 20;
+    // Spread players far away and stun them to prevent AI interference.
+    for (let i = 0; i < s.players.length; i++) {
+      s.players[i].x = FIELD_RIGHT - 20 + i * 5;
+      s.players[i].y = FIELD_BOTTOM - 20 + i * 5;
+      s.players[i].vx = 0; s.players[i].vy = 0;
+      s.players[i].stunnedTime = 5;
     }
-    // Run until the ball crosses the goal line.
     runFor(s, 0.2, emptyInput(0));
     expect(s.score[1]).toBe(0);
     expect(s.restartType).toBe('goalKick');
