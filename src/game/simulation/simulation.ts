@@ -9,7 +9,7 @@ import {
   GK_HOLD_MAX, PENALTY_SHOOTOUT_KICKS, PENALTY_SPOT_X, PLAYERS_PER_TEAM,
   PLAYER_RADIUS, TACKLE_RADIUS, SHOOT_CHARGE_TIME, m,
   FIELD_CX, FIELD_CY, FIELD_RIGHT, FIELD_X,
-  type Difficulty,
+  type Difficulty, type MatchFormat, FORMAT_PLAYER_COUNT,
 } from './constants';
 import type { HumanController, InputFrame, MatchState, PlayerEntity, Team } from './types';
 import { hashSeed, rngCreate, rngFloat } from './rng';
@@ -41,6 +41,7 @@ export interface CreateMatchOptions {
   humanPlayers?: 0 | 1 | 2;
   seed?: number | string;
   autoSwitch?: boolean;
+  matchFormat?: MatchFormat;
 }
 
 function makeController(team: Team, activeId: number, autoSwitch: boolean): HumanController {
@@ -54,12 +55,16 @@ export function createMatchState(opts: CreateMatchOptions = {}): MatchState {
   const humanTeam: Team = opts.humanTeam ?? 0;
   const humanPlayers = opts.humanPlayers ?? 1;
   const autoSwitch = opts.autoSwitch ?? true;
+  const matchFormat: MatchFormat = opts.matchFormat ?? '5v5';
+  const playerCount = FORMAT_PLAYER_COUNT[matchFormat];
   const seedNum = typeof opts.seed === 'number' ? opts.seed : hashSeed(opts.seed ?? `kf-${Date.now()}`);
   const controllers: HumanController[] = [];
-  if (humanPlayers >= 1) controllers.push(makeController(humanTeam, humanTeam === 0 ? 4 : 9, autoSwitch));
+  const fwdId = humanTeam === 0 ? playerCount - 1 : playerCount * 2 - 1;
+  if (humanPlayers >= 1) controllers.push(makeController(humanTeam, fwdId, autoSwitch));
   if (humanPlayers === 2) {
     const other: Team = (1 - humanTeam) as Team;
-    controllers.push(makeController(other, other === 0 ? 4 : 9, autoSwitch));
+    const otherFwdId = other === 0 ? playerCount - 1 : playerCount * 2 - 1;
+    controllers.push(makeController(other, otherFwdId, autoSwitch));
   }
   const state: MatchState = {
     timeMs: 0, half: 1, period: 'kickoff', score: [0, 0],
@@ -70,7 +75,7 @@ export function createMatchState(opts: CreateMatchOptions = {}): MatchState {
       releaseCooldown: 0, possessionShield: 0, shieldTeam: null,
       gkHoldTime: 0, indirect: false, ballState: 'LOOSE', touchTimer: 0,
     },
-    players: buildPlayers(), controllers,
+    players: buildPlayers(matchFormat), controllers,
     restartTeam: 0, restartType: 'kickoff', restartTimer: 0,
     lastTouchTeam: null, nextRestartTeam: 0, nextRestartType: null,
     rngState: rngCreate(seedNum), difficulty, halfLength, tick: 0,

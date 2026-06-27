@@ -140,6 +140,13 @@ export const DIFFICULTY_PARAMS: Record<
 // --- Futsal roles & formation (1-2-1) -------------------------------------
 export type FutsalRole = 'goalkeeper' | 'fixo' | 'leftAla' | 'rightAla' | 'pivot';
 export const PLAYERS_PER_TEAM = 5;
+/** Supported match formats. */
+export type MatchFormat = '5v5' | '7v7' | '11v11';
+export const FORMAT_PLAYER_COUNT: Record<MatchFormat, number> = {
+  '5v5': 5,
+  '7v7': 7,
+  '11v11': 11,
+};
 export const FORMATION_121_HOME: Array<{ role: FutsalRole; x: number; y: number }> = [
   { role: 'goalkeeper', x: 1.2, y: 9.5 },
   { role: 'fixo', x: 12, y: 9.5 },

@@ -17,7 +17,8 @@ import {
   POSSESSION_SHIELD, GK_HOLD_MAX, PLAYERS_PER_TEAM,
   PENALTY_SHOOTOUT_KICKS, PENALTY_SPOT_X_M,
   SNAPSHOT_RATE, INPUT_RATE, INTERP_DELAY, MAX_INPUT_BUFFER, DISCONNECT_GRACE,
-  type Difficulty, type FutsalRole, type TeamPhase, type BallStateName,
+  type Difficulty, type FutsalRole, type TeamPhase, type BallStateName, type MatchFormat,
+  FORMAT_PLAYER_COUNT,
 } from './tacticsConfig';
 
 // Re-export tactical config
@@ -25,7 +26,8 @@ export { METER_PX, mps, m, MOVEMENT, BALL, DEFENSE, PASSING, SHOOTING, AI_INTERV
 export { DIFFICULTY_PARAMS, TEAM_COLORS, FIELD_COLORS, FORMATION_121_HOME };
 export { GOAL_CELEBRATION_TIME, KICKOFF_DELAY, RESTART_SETUP_TIME, POSSESSION_SHIELD, GK_HOLD_MAX, PLAYERS_PER_TEAM };
 export { PENALTY_SHOOTOUT_KICKS, SNAPSHOT_RATE, INPUT_RATE, INTERP_DELAY, MAX_INPUT_BUFFER, DISCONNECT_GRACE };
-export type { Difficulty, FutsalRole, TeamPhase, BallStateName };
+export type { Difficulty, FutsalRole, TeamPhase, BallStateName, MatchFormat };
+export { FORMAT_PLAYER_COUNT };
 
 // --- Pixel geometry (1 m = 32 px; field ~35 × 19 m) -----------------------
 export const VIEW_W = 640;
