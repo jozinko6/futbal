@@ -147,6 +147,20 @@ export function GameContainer() {
     setPaused((p) => !p);
   }, []);
 
+  // Debug overlay toggle (F3 or B).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      if (k === 'f3' || k === 'b') {
+        const s = matchRef.current;
+        if (s) s.debug = !s.debug;
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // Persist settings.
   useEffect(() => {
     try {

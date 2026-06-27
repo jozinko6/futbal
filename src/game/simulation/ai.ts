@@ -1,396 +1,307 @@
 /**
- * AI state machine for non-human players.
+ * Utility-based individual AI with a state machine.
  *
- * Reads ONLY the current match state (never a future state) and re-evaluates
- * decisions on a reaction timer scaled by difficulty. All randomness flows
- * through the seeded RNG on MatchState so the simulation stays deterministic
- * (same inputs -> same outputs on client and server).
+ * Each tick (on the player's decision interval) every possible action is
+ * scored 0..1; the highest wins. AI reads ONLY the current state (never
+ * future inputs). Decisions re-evaluate on an interval jittered by the
+ * seeded RNG (Easy/Normal/Hard ranges).
  */
 import {
-  DIFFICULTY_PARAMS,
-  FIELD_BOTTOM,
-  FIELD_CX,
-  FIELD_CY,
-  FIELD_RIGHT,
-  FIELD_TOP,
-  FIELD_X,
-  GOAL_BOTTOM,
-  GOAL_TOP,
+  FIELD_CX, FIELD_CY, FIELD_RIGHT, FIELD_X, m, mps,
+  DIFFICULTY_PARAMS, AI_INTERVALS, MOVEMENT,
+  type FutsalRole,
 } from './constants';
-import type { MatchState, PlayerEntity, Team } from './types';
-import { dist, len } from './math';
-import { applyMovement, gkDive, pass, shoot, startTackle, tryTackle } from './player';
-import { formationSlot, indexInTeam } from './formation';
+import type { AiAction, MatchState, PlayerEntity, Team, WithBallAction, OffBallAction } from './types';
+import { dist, len, angleTo } from './math';
 import { rngFloat } from './rng';
+import { applyMovement, containMovement, pass, shoot, startTackle, pokeTackle, tryTackle } from './player';
+import { attackingGoalX } from './teamTactics';
+import { ownGoalX } from './goalkeeper';
+import { formationSlot, indexInTeam } from './formation';
 
 type DiffParams = typeof DIFFICULTY_PARAMS.normal;
 
-/** Goal a team attacks. */
-export function attackingGoalX(team: Team): number {
-  return team === 0 ? FIELD_RIGHT : FIELD_X;
-}
-export function ownGoalX(team: Team): number {
-  return team === 0 ? FIELD_X : FIELD_RIGHT;
-}
-
-/** Seeded random in [min,max). Advances state.rngState deterministically. */
 function rnd(state: MatchState, min: number, max: number): number {
   const [next, v] = rngFloat(state.rngState, min, max);
   state.rngState = next;
   return v;
 }
 
-function nearestPlayer(
-  state: MatchState,
-  team: Team,
-  x: number,
-  y: number,
-  excludeId?: number,
-): PlayerEntity | null {
-  let best: PlayerEntity | null = null;
-  let bd = Infinity;
-  for (const p of state.players) {
-    if (p.team !== team) continue;
-    if (excludeId != null && p.id === excludeId) continue;
-    const d = dist(p.x, p.y, x, y);
-    if (d < bd) {
-      bd = d;
-      best = p;
-    }
-  }
-  return best;
+function clampX(x: number): number { return Math.max(FIELD_X + m(1), Math.min(FIELD_RIGHT - m(1), x)); }
+function clampY(y: number, lo = FIELD_CY - m(9), hi = FIELD_CY + m(9)): number {
+  return Math.max(lo, Math.min(hi, y));
 }
 
 function nearestOpponent(state: MatchState, team: Team, x: number, y: number): PlayerEntity | null {
-  return nearestPlayer(state, (1 - team) as Team, x, y);
+  let best: PlayerEntity | null = null;
+  let bd = Infinity;
+  for (const o of state.players) {
+    if (o.team === team) continue;
+    const d = dist(o.x, o.y, x, y);
+    if (d < bd) { bd = d; best = o; }
+  }
+  return best;
 }
-
 function distToNearestOpponent(state: MatchState, team: Team, x: number, y: number): number {
   const o = nearestOpponent(state, team, x, y);
   return o ? dist(o.x, o.y, x, y) : Infinity;
 }
 
-function pressured(state: MatchState, team: Team, x: number, y: number, range: number): boolean {
-  return distToNearestOpponent(state, team, x, y) < range;
-}
-
-function clampX(x: number): number {
-  return Math.max(FIELD_X + 12, Math.min(FIELD_RIGHT - 12, x));
-}
-function clampY(y: number): number {
-  return Math.max(FIELD_TOP + 12, Math.min(FIELD_BOTTOM - 12, y));
-}
-
-/** Re-evaluate the AI action/target for a player. */
+/** Re-evaluate the AI action for a player (utility-based). */
 export function aiDecide(state: MatchState, p: PlayerEntity): void {
   const params = DIFFICULTY_PARAMS[state.difficulty];
+  if (p.role === 'goalkeeper') {
+    // GK controller handles positioning; here just idle the decision.
+    p.aiAction = 'idle';
+    return;
+  }
   const ball = state.ball;
-  const team = p.team;
   const owner = ball.ownerId != null ? state.players[ball.ownerId] : null;
+  const scores: Record<string, number> = {};
 
-  if (p.role === 'GK') {
-    decideGK(state, p);
-    return;
-  }
-
-  if (owner && owner.team === team) {
-    if (owner.id === p.id) {
-      decideWithBall(state, p, params);
-    } else {
-      decideSupport(state, p);
-    }
-    return;
-  }
-
-  const myDistToBall = dist(p.x, p.y, ball.x, ball.y);
-  const closestMate = nearestPlayer(state, team, ball.x, ball.y);
-  const closestMateIsMe = closestMate != null && closestMate.id === p.id;
-
-  if (owner == null) {
-    if (closestMateIsMe) {
-      p.aiAction = 'receive';
-      p.aiTarget = { x: ball.x, y: ball.y };
-    } else {
-      decideDefensiveShape(state, p, params);
-    }
-    return;
-  }
-
-  if (closestMateIsMe && myDistToBall < 230) {
-    p.aiAction = 'press';
-    p.aiTarget = { x: ball.x, y: ball.y };
+  if (owner && owner.team === p.team && owner.id === p.id) {
+    // With ball — score with-ball actions.
+    scoreWithBall(state, p, params, scores);
+    const best = pickBest(scores);
+    p.aiAction = best as AiAction;
+    planWithBall(state, p, best as WithBallAction, params);
   } else {
-    decideDefensiveShape(state, p, params);
+    // Without ball.
+    scoreOffBall(state, p, params, scores, owner, owner?.team === p.team);
+    const best = pickBest(scores);
+    p.aiAction = best as AiAction;
+    planOffBall(state, p, best as OffBallAction, owner);
   }
+  p.utilityScores = scores;
 }
 
-function decideWithBall(state: MatchState, p: PlayerEntity, params: DiffParams): void {
-  const goalX = attackingGoalX(p.team);
-  const distToGoal = dist(p.x, p.y, goalX, FIELD_CY);
-  const underPressure = pressured(state, p.team, p.x, p.y, 46);
-
-  const inShootingRange = distToGoal < 230;
-  const aligned = p.team === 0 ? p.x > FIELD_CX - 60 : p.x < FIELD_CX + 60;
-  if (inShootingRange && aligned && rnd(state, 0, 1) < params.precision) {
-    p.aiAction = 'shoot';
-    return;
-  }
-
-  const passChance = underPressure ? params.passRisk + 0.4 : params.passRisk * 0.3;
-  if (rnd(state, 0, 1) < passChance) {
-    const mate = pickPassTarget(state, p);
-    if (mate) {
-      p.aiAction = 'pass';
-      p.aiTarget = { x: mate.x, y: mate.y };
-      return;
-    }
-  }
-
-  p.aiAction = 'dribble';
-  p.aiTarget = { x: goalX, y: FIELD_CY + rnd(state, -60, 60) };
-}
-
-function pickPassTarget(state: MatchState, p: PlayerEntity): PlayerEntity | null {
-  let best: PlayerEntity | null = null;
-  let bestScore = -Infinity;
-  for (const m of state.players) {
-    if (m.team !== p.team || m.id === p.id || m.role === 'GK') continue;
-    const ahead = p.team === 0 ? m.x - p.x : p.x - m.x;
-    const oppDist = distToNearestOpponent(state, p.team, m.x, m.y);
-    const score = ahead * 1.2 + oppDist * 1.5 - dist(p.x, p.y, m.x, m.y) * 0.5;
-    if (score > bestScore) {
-      bestScore = score;
-      best = m;
-    }
-  }
-  if (
-    best &&
-    (p.team === 0 ? best.x < p.x - 40 : best.x > p.x + 40) &&
-    distToNearestOpponent(state, p.team, p.x, p.y) > 60
-  ) {
-    return null;
+function pickBest(scores: Record<string, number>): string {
+  let best = 'idle';
+  let bs = -1;
+  for (const k of Object.keys(scores)) {
+    if (scores[k] > bs) { bs = scores[k]; best = k; }
   }
   return best;
 }
 
-/**
- * Teammate without the ball, in possession phase. Each role holds a logical
- * position and offers a passing lane toward the attacking goal:
- *   DEF  — stay back (cover), drift toward own half only
- *   WING — hold width on the flank, push forward when the ball is advanced
- *   FWD  — stay central & high, offer a target ahead of the ball
- *   MID  — link, sit between ball and own goal
- *
- * When the ball carrier is under pressure or has space to release the ball,
- * teammates make themselves available by moving into open space ahead of the
- * ball (supporting run), rather than clustering around it.
- */
-function decideSupport(state: MatchState, p: PlayerEntity): void {
-  const ball = state.ball;
-  const owner = ball.ownerId != null ? state.players[ball.ownerId] : null;
-  const slot = formationSlot(p.team, indexInTeam(p.id));
-  const dirSign = p.team === 0 ? 1 : -1; // attack direction (+x for home)
+// --- With-ball utility -----------------------------------------------------
 
-  // Base target = formation slot, shifted toward the ball y.
-  let tx = slot.x;
-  let ty = slot.y + (ball.y - FIELD_CY) * (p.role === 'DEF' ? 0.15 : 0.3);
+function scoreWithBall(state: MatchState, p: PlayerEntity, params: DiffParams, out: Record<string, number>): void {
+  const goalX = attackingGoalX(p.team);
+  const dGoal = dist(p.x, p.y, goalX, FIELD_CY);
+  const pressure = 1 - Math.min(1, distToNearestOpponent(state, p.team, p.x, p.y) / m(2));
+  const mateOpen = countOpenMates(state, p);
+  out.DRIBBLE = 0.4 + (1 - pressure) * 0.3 - (dGoal < m(8) ? 0.2 : 0);
+  out.HOLD_BALL = 0.2 + pressure * 0.4;
+  out.SHORT_PASS = 0.3 + mateOpen * 0.25 + pressure * 0.2;
+  out.THROUGH_PASS = mateOpen > 1 ? 0.45 + params.passRisk * 0.3 : 0.1;
+  out.BACK_PASS = pressure * 0.4 + 0.1;
+  out.LOB_PASS = pressure > 0.5 ? 0.3 + params.passRisk * 0.2 : 0.1;
+  out.SHOOT = dGoal < m(10) ? 0.5 + (1 - dGoal / m(10)) * 0.4 - pressure * 0.2 : 0.05;
+  out.CLEAR_BALL = pressure > 0.7 && dGoal < m(6) ? 0.5 : 0.05;
+  // Apply precision jitter.
+  for (const k of Object.keys(out)) out[k] *= 0.85 + params.precision * 0.15;
+}
 
-  // Advance the role when the ball is in the attacking half.
-  const ballInAttHalf = p.team === 0 ? ball.x > FIELD_CX : ball.x < FIELD_CX;
-  if (ballInAttHalf) {
-    const ahead = 90 * dirSign;
-    if (p.role === 'FWD') tx = ball.x + ahead; // stay ahead of the ball centrally
-    else if (p.role === 'WING') tx = ball.x + ahead * 0.7; // wide run forward
-    else if (p.role === 'MID') tx = ball.x + ahead * 0.4; // link
-    // DEF stays back even when attacking.
+function countOpenMates(state: MatchState, p: PlayerEntity): number {
+  let n = 0;
+  for (const m2 of state.players) {
+    if (m2.team !== p.team || m2.id === p.id || m2.role === 'goalkeeper') continue;
+    if (distToNearestOpponent(state, p.team, m2.x, m2.y) > m(2)) n++;
   }
+  return n;
+}
 
-  // Supporting run: if the carrier is pressured or has had the ball a moment,
-  // the nearest non-FWD teammate offers a short forward passing lane.
-  if (owner && owner.id !== p.id && p.role !== 'GK') {
-    const carrierPressured = distToNearestOpponent(state, p.team, owner.x, owner.y) < 60;
-    const dToCarrier = dist(p.x, p.y, owner.x, owner.y);
-    if (carrierPressured && dToCarrier < 220) {
-      // Offer a lane diagonally ahead of the carrier, away from the nearest
-      // opponent (spread to space, not cluster).
-      const opp = nearestOpponent(state, p.team, p.x, p.y);
-      const awayX = opp ? Math.sign(p.x - opp.x) || dirSign : dirSign;
-      const awayY = opp ? Math.sign(p.y - opp.y) : (p.role === 'WING' ? Math.sign(slot.y - FIELD_CY) : 0);
-      tx = owner.x + 40 * dirSign + awayX * 30;
-      ty = owner.y + (awayY * 40 || (p.role === 'WING' ? (slot.y - FIELD_CY) * 0.6 : 0));
-      p.aiAction = 'support';
-      p.aiTarget = { x: clampX(tx), y: clampY(ty) };
-      return;
+function planWithBall(state: MatchState, p: PlayerEntity, action: WithBallAction, params: DiffParams): void {
+  const goalX = attackingGoalX(p.team);
+  switch (action) {
+    case 'SHOOT': {
+      if (p.hasBall) shoot(p, goalX, FIELD_CY + rnd(state, -m(1.5), m(1.5)) * (1 - params.precision), Math.min(1, 0.6 + params.precision * 0.3), state, 'normal');
+      break;
+    }
+    case 'SHORT_PASS':
+    case 'THROUGH_PASS':
+    case 'BACK_PASS':
+    case 'LOB_PASS': {
+      if (p.hasBall) {
+        const mate = pickPassTarget(state, p, action);
+        if (mate) pass(p, mate.x, mate.y, state, action === 'LOB_PASS' ? 'lob' : action === 'THROUGH_PASS' ? 'through' : 'short');
+      }
+      break;
+    }
+    case 'DRIBBLE': {
+      p.aiTarget = { x: goalX, y: FIELD_CY + rnd(state, -m(3), m(3)) };
+      break;
+    }
+    case 'HOLD_BALL': {
+      p.aiTarget = { x: p.x, y: p.y };
+      break;
+    }
+    case 'CLEAR_BALL': {
+      if (p.hasBall) {
+        const cx = p.team === 0 ? 1 : -1;
+        pass(p, p.x + cx * m(15), FIELD_CY + rnd(state, -m(4), m(4)), state, 'driven');
+      }
+      break;
     }
   }
-
-  // Wingers hold width: clamp y toward their flank.
-  if (p.role === 'WING') {
-    const flankY = slot.y;
-    ty = ty * 0.4 + flankY * 0.6;
-  }
-  // FWD stays central in y.
-  if (p.role === 'FWD') {
-    ty = FIELD_CY + (ball.y - FIELD_CY) * 0.2;
-  }
-  // DEF stays in own half.
-  if (p.role === 'DEF') {
-    if (p.team === 0) tx = Math.min(tx, FIELD_CX - 30);
-    else tx = Math.max(tx, FIELD_CX + 30);
-  }
-
-  p.aiAction = 'support';
-  p.aiTarget = { x: clampX(tx), y: clampY(ty) };
 }
 
-function decideDefensiveShape(state: MatchState, p: PlayerEntity, params: DiffParams): void {
+function pickPassTarget(state: MatchState, p: PlayerEntity, action: WithBallAction): PlayerEntity | null {
+  let best: PlayerEntity | null = null;
+  let bs = -Infinity;
+  for (const m2 of state.players) {
+    if (m2.team !== p.team || m2.id === p.id || m2.role === 'goalkeeper') continue;
+    const ahead = p.team === 0 ? m2.x - p.x : p.x - m2.x;
+    if (action === 'BACK_PASS' && ahead > 0) continue;
+    if ((action === 'SHORT_PASS' || action === 'THROUGH_PASS') && ahead < -m(3)) continue;
+    const opp = distToNearestOpponent(state, p.team, m2.x, m2.y);
+    const d = dist(p.x, p.y, m2.x, m2.y);
+    let score = ahead * 0.002 + opp * 0.003 - d * 0.001;
+    if (action === 'THROUGH_PASS') score += (m2.vx !== 0 || m2.vy !== 0 ? 0.2 : 0);
+    if (score > bs) { bs = score; best = m2; }
+  }
+  return best;
+}
+
+// --- Off-ball utility ------------------------------------------------------
+
+function scoreOffBall(
+  state: MatchState, p: PlayerEntity, params: DiffParams, out: Record<string, number>,
+  owner: PlayerEntity | null, weHaveBall: boolean,
+): void {
   const ball = state.ball;
+  const myDistBall = dist(p.x, p.y, ball.x, ball.y);
+  const closest = isClosestMateToBall(state, p);
+  const phase = state.teamPhase[p.team];
+  out.RETURN_TO_FORMATION = 0.2;
+  out.SUPPORT = weHaveBall ? 0.5 + (p.role === 'pivot' ? 0.2 : 0) : 0.1;
+  out.RUN_IN_BEHIND = weHaveBall && p.role === 'pivot' ? 0.55 : weHaveBall && (p.role === 'leftAla' || p.role === 'rightAla') ? 0.4 : 0.05;
+  out.MOVE_WIDE = weHaveBall && (p.role === 'leftAla' || p.role === 'rightAla') ? 0.45 : 0.1;
+  out.MOVE_TO_BACK_POST = weHaveBall && p.role === 'pivot' && phase === 'FINAL_THIRD' ? 0.4 : 0.1;
+  out.DROP_DEEP = !weHaveBall && p.role === 'fixo' ? 0.4 : 0.1;
+  out.COVER = !weHaveBall && p.role === 'fixo' ? 0.45 : 0.1;
+  out.MARK = !weHaveBall && p.markingTarget != null ? 0.4 : 0.1;
+  out.PRESS = !weHaveBall && closest && myDistBall < m(10) ? 0.5 + params.aggression * 0.3 : 0.05;
+  out.INTERCEPT = !weHaveBall && ball.ballState === 'AIRBORNE' && myDistBall < m(6) ? 0.5 : 0.1;
+  // Anti-clustering: penalize SUPPORT/MOVE_WIDE if a mate is already very close.
+  if (clustered(state, p)) { out.SUPPORT *= 0.3; out.MOVE_WIDE *= 0.3; }
+  for (const k of Object.keys(out)) out[k] *= 0.85 + params.precision * 0.15;
+}
+
+function isClosestMateToBall(state: MatchState, p: PlayerEntity): boolean {
+  let best: PlayerEntity | null = null;
+  let bd = Infinity;
+  for (const m2 of state.players) {
+    if (m2.team !== p.team || m2.role === 'goalkeeper') continue;
+    const d = dist(m2.x, m2.y, state.ball.x, state.ball.y);
+    if (d < bd) { bd = d; best = m2; }
+  }
+  return best?.id === p.id;
+}
+
+function clustered(state: MatchState, p: PlayerEntity): boolean {
+  for (const m2 of state.players) {
+    if (m2.team !== p.team || m2.id === p.id) continue;
+    if (dist(p.x, p.y, m2.x, m2.y) < m(1.5)) return true;
+  }
+  return false;
+}
+
+function planOffBall(state: MatchState, p: PlayerEntity, action: OffBallAction, owner: PlayerEntity | null): void {
+  const ball = state.ball;
+  const dirSign = p.team === 0 ? 1 : -1;
+  const goalX = attackingGoalX(p.team);
   const slot = formationSlot(p.team, indexInTeam(p.id));
-
-  // Defenders hold a deep line: track the ball's y only modestly and never
-  // advance beyond their own half unless pressing close to the ball.
-  if (p.role === 'DEF') {
-    const tx = slot.x + (ball.x - FIELD_CX) * 0.12;
-    const ty = slot.y + (ball.y - FIELD_CY) * 0.3;
-    p.aiAction =
-      params.aggression > 0.5 && dist(p.x, p.y, ball.x, ball.y) < 130 ? 'press' : 'mark';
-    p.aiTarget = { x: clampX(tx), y: clampY(ty) };
-    return;
-  }
-
-  // Wingers drop back to their flank when defending.
-  if (p.role === 'WING') {
-    const tx = slot.x - 80 * (p.team === 0 ? 1 : -1);
-    const ty = slot.y + (ball.y - FIELD_CY) * 0.2;
-    p.aiAction = dist(p.x, p.y, ball.x, ball.y) < 150 ? 'press' : 'mark';
-    p.aiTarget = { x: clampX(tx), y: clampY(ty) };
-    return;
-  }
-
-  // FWD stays high (counter-attack threat) — marks the halfway line area.
-  if (p.role === 'FWD') {
-    const tx = p.team === 0 ? FIELD_CX + 40 : FIELD_CX - 40;
-    const ty = FIELD_CY + (ball.y - FIELD_CY) * 0.15;
-    p.aiAction = 'mark';
-    p.aiTarget = { x: clampX(tx), y: clampY(ty) };
-    return;
-  }
-
-  // MID: compress toward own goal, track ball y.
-  const compress = p.team === 0 ? -40 : 40;
-  const tx = slot.x + compress + (ball.x - FIELD_CX) * 0.18;
-  const ty = slot.y + (ball.y - FIELD_CY) * 0.4;
-  p.aiAction =
-    params.aggression > 0.5 && dist(p.x, p.y, ball.x, ball.y) < 160 ? 'press' : 'mark';
-  p.aiTarget = { x: clampX(tx), y: clampY(ty) };
-}
-
-function decideGK(state: MatchState, p: PlayerEntity): void {
-  const ball = state.ball;
-  const lineX = ownGoalX(p.team) + (p.team === 0 ? 40 : -40);
-  const ty = Math.max(FIELD_CY - 50, Math.min(FIELD_CY + 50, ball.y));
-  p.aiAction = 'gkPosition';
-  p.aiTarget = { x: lineX, y: ty };
-
-  const goalLineX = ownGoalX(p.team);
-  const movingTowardGoal =
-    (p.team === 0 && ball.vx < -120) || (p.team === 1 && ball.vx > 120);
-  const distToGoal = Math.abs(ball.x - goalLineX);
-  if (movingTowardGoal && distToGoal < 180 && ball.z < 22) {
-    const t = distToGoal / Math.max(40, Math.abs(ball.vx));
-    const py = ball.y + ball.vy * t;
-    if (Math.abs(py - p.y) > 26) {
-      p.aiAction = 'gkDive';
-      p.aiTarget = { x: goalLineX, y: Math.max(GOAL_TOP, Math.min(GOAL_BOTTOM, py)) };
+  switch (action) {
+    case 'SUPPORT': {
+      if (owner) {
+        // Offer a lane ahead of the carrier, away from nearest opponent.
+        const opp = nearestOpponent(state, p.team, p.x, p.y);
+        const away = opp ? Math.sign(p.x - opp.x) || dirSign : dirSign;
+        p.aiTarget = { x: clampX(owner.x + m(3) * dirSign + away * m(1)), y: clampY(owner.y + (p.role === 'leftAla' ? -m(3) : p.role === 'rightAla' ? m(3) : 0)) };
+      } else p.aiTarget = p.dynamicFormationPosition;
+      break;
     }
-  }
-
-  if (ball.ownerId == null && dist(p.x, p.y, ball.x, ball.y) < 80 && distToGoal < 70) {
-    p.aiAction = 'gkCharge';
-    p.aiTarget = { x: ball.x, y: ball.y };
+    case 'RUN_IN_BEHIND':
+      p.aiTarget = { x: clampX(goalX - m(2)), y: clampY(ball.y) };
+      break;
+    case 'MOVE_WIDE':
+      p.aiTarget = { x: clampX(ball.x + m(2) * dirSign), y: p.role === 'leftAla' ? clampY(FIELD_CY - m(7)) : clampY(FIELD_CY + m(7)) };
+      break;
+    case 'MOVE_TO_BACK_POST':
+      p.aiTarget = { x: clampX(goalX - m(2)), y: clampY(ball.y + rnd(state, -m(2), m(2))) };
+      break;
+    case 'DROP_DEEP':
+      p.aiTarget = { x: ownGoalX(p.team) + m(5) * dirSign, y: clampY(ball.y) };
+      break;
+    case 'COVER':
+      p.aiTarget = { x: ownGoalX(p.team) + m(6) * dirSign, y: clampY(FIELD_CY + (ball.y - FIELD_CY) * 0.4) };
+      break;
+    case 'MARK':
+      if (p.markingTarget != null) {
+        const m2 = state.players[p.markingTarget];
+        if (m2) p.aiTarget = { x: m2.x, y: m2.y };
+      }
+      break;
+    case 'PRESS':
+      p.aiTarget = { x: ball.x, y: ball.y };
+      break;
+    case 'INTERCEPT':
+      p.aiTarget = { x: ball.x, y: ball.y };
+      break;
+    case 'RETURN_TO_FORMATION':
+    default:
+      p.aiTarget = p.dynamicFormationPosition;
+      break;
   }
 }
 
-/** Execute the chosen AI action for one tick (movement + side effects). */
+// --- Execute ---------------------------------------------------------------
+
 export function aiAct(state: MatchState, p: PlayerEntity, dt: number): void {
   const params = DIFFICULTY_PARAMS[state.difficulty];
+  const intv = AI_INTERVALS[state.difficulty];
   if (p.aiTimer > 0) p.aiTimer -= dt;
-
   if (p.aiTimer <= 0) {
     aiDecide(state, p);
-    p.aiTimer = params.reactionMs / 1000;
+    const [next, j] = rngFloat(state.rngState, intv.min, intv.max);
+    state.rngState = next;
+    p.aiTimer = j / 1000;
   }
+  if (p.state === 'tackle' || p.state === 'slide' || p.state === 'goalkeeperDive' || p.stunnedTime > 0 || p.actionLock > 0) return;
 
-  if (p.state === 'tackle' || p.state === 'goalkeeperDive' || p.stunnedTime > 0 || p.actionLock > 0) {
-    return;
-  }
-
-  const ball = state.ball;
   const action = p.aiAction;
-  const tx = p.aiTarget.x;
-  const ty = p.aiTarget.y;
-
-  let mx = 0;
-  let my = 0;
-  let sprint = false;
+  const ball = state.ball;
+  let mx = 0, my = 0, sprint = false;
 
   switch (action) {
-    case 'shoot': {
-      const goalX = attackingGoalX(p.team);
-      const gy = FIELD_CY + rnd(state, -40, 40) * (1 - params.precision);
-      if (p.hasBall) {
-        shoot(p, goalX, gy, 0.6 + params.precision * 0.3, state);
-      }
-      break;
-    }
-    case 'pass': {
-      if (p.hasBall) {
-        const high = dist(p.x, p.y, tx, ty) > 280;
-        pass(p, tx, ty, state, high);
-      }
-      break;
-    }
-    case 'dribble': {
-      mx = tx - p.x;
-      my = ty - p.y;
-      break;
-    }
-    case 'receive':
-    case 'support':
-    case 'runToSpace':
-    case 'gkCharge': {
-      mx = tx - p.x;
-      my = ty - p.y;
-      sprint = action === 'receive' && dist(p.x, p.y, ball.x, ball.y) > 90;
-      break;
-    }
-    case 'press': {
-      mx = ball.x - p.x;
-      my = ball.y - p.y;
+    case 'PRESS': {
+      // Move to ball; tackle/poke when close.
+      mx = ball.x - p.x; my = ball.y - p.y;
       const owner = ball.ownerId != null ? state.players[ball.ownerId] : null;
-      if (owner && owner.team !== p.team && dist(p.x, p.y, owner.x, owner.y) < 26) {
-        if (p.slideCooldown <= 0 && rnd(state, 0, 1) < params.aggression * 0.04) {
-          startTackle(p, mx, my);
-        } else {
-          tryTackle(p, state);
-        }
+      if (owner && owner.team !== p.team && dist(p.x, p.y, owner.x, owner.y) < m(1.2)) {
+        if (p.slideCooldown <= 0 && rnd(state, 0, 1) < params.aggression * 0.05) startTackle(p, mx, my);
+        else if (p.pokeCooldown <= 0) pokeTackle(p, state);
+        else tryTackle(p, state);
       }
-      sprint = dist(p.x, p.y, ball.x, ball.y) > 70;
+      sprint = dist(p.x, p.y, ball.x, ball.y) > m(3);
       break;
     }
-    case 'mark':
-    case 'returnToFormation':
-    case 'gkPosition': {
-      mx = tx - p.x;
-      my = ty - p.y;
-      break;
-    }
-    case 'gkDive': {
-      const dx = p.aiTarget.x - p.x;
-      const dy = p.aiTarget.y - p.y;
-      if (Math.abs(dy) > 20 && p.diveTime <= 0) {
-        gkDive(p, Math.sign(dx) || (p.team === 0 ? 1 : -1), Math.sign(dy));
-      }
+    case 'INTERCEPT':
+    case 'SUPPORT':
+    case 'RUN_IN_BEHIND':
+    case 'MOVE_WIDE':
+    case 'MOVE_TO_BACK_POST':
+    case 'DROP_DEEP':
+    case 'COVER':
+    case 'MARK':
+    case 'RETURN_TO_FORMATION':
+    case 'DRIBBLE':
+    case 'HOLD_BALL': {
+      mx = p.aiTarget.x - p.x; my = p.aiTarget.y - p.y;
+      const a = action as string;
+      sprint = a === 'RUN_IN_BEHIND' || a === 'INTERCEPT' || (a === 'PRESS' && dist(p.x, p.y, ball.x, ball.y) > m(3));
       break;
     }
     case 'idle':
@@ -398,10 +309,9 @@ export function aiAct(state: MatchState, p: PlayerEntity, dt: number): void {
       break;
   }
 
-  const m = len(mx, my);
-  if (m > 0.01) {
-    mx /= m;
-    my /= m;
-  }
-  applyMovement(p, mx, my, sprint, dt);
+  const mag = len(mx, my);
+  if (mag > 0.01) { mx /= mag; my /= mag; }
+  applyMovement(p, mx, my, sprint, p.hasBall, dt);
 }
+
+export { angleTo };

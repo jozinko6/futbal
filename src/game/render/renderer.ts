@@ -89,6 +89,80 @@ export function render(
   if (state.banner && state.bannerTimer > 0) {
     drawBanner(ctx, state.banner);
   }
+
+  // --- Debug overlay ---
+  if (state.debug) {
+    renderDebug(ctx, state, origin);
+  }
+}
+
+/** Debug overlay: AI targets, formation, pass lanes, marking, utilities,
+ *  collision circles, velocity, ball state, team phase. */
+export function renderDebug(
+  ctx: CanvasRenderingContext2D,
+  state: MatchState,
+  origin: { x: number; y: number },
+): void {
+  ctx.save();
+  ctx.lineWidth = 1;
+  // AI target positions (small crosses).
+  ctx.strokeStyle = '#ffd23f';
+  for (const p of state.players) {
+    const tx = Math.round(p.aiTarget.x - origin.x);
+    const ty = Math.round(p.aiTarget.y - origin.y);
+    ctx.beginPath();
+    ctx.moveTo(tx - 3, ty); ctx.lineTo(tx + 3, ty);
+    ctx.moveTo(tx, ty - 3); ctx.lineTo(tx, ty + 3);
+    ctx.stroke();
+  }
+  // Dynamic formation positions (dots) + marking assignments (lines).
+  for (const p of state.players) {
+    const px = Math.round(p.x - origin.x);
+    const py = Math.round(p.y - origin.y);
+    // Collision circle.
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    ctx.beginPath(); ctx.arc(px, py, 9, 0, Math.PI * 2); ctx.stroke();
+    // Velocity vector.
+    ctx.strokeStyle = '#7bd389';
+    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + p.vx * 0.1, py + p.vy * 0.1); ctx.stroke();
+    // Marking line.
+    if (p.markingTarget != null) {
+      const m = state.players[p.markingTarget];
+      if (m) {
+        ctx.strokeStyle = 'rgba(255,80,80,0.5)';
+        ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(Math.round(m.x - origin.x), Math.round(m.y - origin.y)); ctx.stroke();
+      }
+    }
+    // Utility score (top action) above player.
+    const topAction = Object.entries(p.utilityScores).sort((a, b) => b[1] - a[1])[0];
+    if (topAction) {
+      ctx.fillStyle = '#ffd23f';
+      ctx.font = '7px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${topAction[0].slice(0, 4)}:${topAction[1].toFixed(2)}`, px, py - 16);
+    }
+  }
+  // Pass lanes from ball owner.
+  const owner = state.ball.ownerId != null ? state.players[state.ball.ownerId] : null;
+  if (owner) {
+    ctx.strokeStyle = 'rgba(100,200,255,0.5)';
+    for (const m of state.players) {
+      if (m.team !== owner.team || m.id === owner.id || m.role === 'goalkeeper') continue;
+      ctx.beginPath();
+      ctx.moveTo(Math.round(owner.x - origin.x), Math.round(owner.y - origin.y));
+      ctx.lineTo(Math.round(m.x - origin.x), Math.round(m.y - origin.y));
+      ctx.stroke();
+    }
+  }
+  // Ball state + team phases (text).
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '8px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(`BALL: ${state.ball.ballState}`, 4, VIEW_H - 18);
+  ctx.fillText(`T0: ${state.teamPhase[0]}`, 4, VIEW_H - 8);
+  ctx.textAlign = 'right';
+  ctx.fillText(`T1: ${state.teamPhase[1]}`, VIEW_W - 4, VIEW_H - 8);
+  ctx.restore();
 }
 
 function drawShadow(

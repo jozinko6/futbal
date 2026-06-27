@@ -322,7 +322,7 @@ export function animationRow(anim: AnimationName): number {
 
 /** Map a PlayerStateName to the best sprite animation. */
 export function stateToAnim(state: string, role: string, moving: boolean): AnimationName {
-  if (role === 'GK') {
+  if (role === 'goalkeeper' || role === 'GK') {
     if (state === 'goalkeeperDive') return 'gkDive';
     if (state === 'stunned') return 'gkIdle';
     if (state === 'celebrate') return 'celebrate';

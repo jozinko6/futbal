@@ -320,3 +320,34 @@ Stage Summary:
   Sega assety — iba originálna generovaná grafika + CC0 referencie (nezasielané).
 - 31/31 testov passing, tsc/lint čistý.
 - `bun run gen:assets` regeneruje všetky shipped assety.
+
+---
+Task ID: 13
+Agent: main
+Task: Futsal 5v5 simulation rewrite (meters-based physics, roles, team controller, utility AI, GK controller, ball states, debug, 100-match sim tests)
+
+Work Log:
+- **tacticsConfig.ts**: všetky tunable hodnoty v SI (m/s, m, s) — MOVEMENT (walkSpeed 2.0 ... sprintSpeed 6.8, acceleration 9, deceleration 13, turnRate 12/7/5), BALL, DEFENSE, PASSING, SHOOTING, AI_INTERVALS (easy 350-500 / normal 220-350 / hard 120-220 ms), DIFFICULTY_PARAMS (gkReactionMs), FORMATION_121_HOME (1-2-1: goalkeeper/fixo/leftAla/rightAla/pivot), TEAM_TACTICS, BallStateName, TeamPhase (9 fáz), METER_PX=32.
+- **types.ts**: FutsalRole, BallStateName (CONTROLLED/LOOSE/CONTESTED/AIRBORNE/GOALKEEPER_CONTROLLED/OUT_OF_PLAY), TeamPhase, WithBallAction (8: DRIBBLE/HOLD_BALL/SHORT_PASS/THROUGH_PASS/BACK_PASS/LOB_PASS/SHOOT/CLEAR_BALL), OffBallAction (10: SUPPORT/RUN_IN_BEHIND/MOVE_WIDE/MOVE_TO_BACK_POST/DROP_DEEP/COVER/MARK/PRESS/INTERCEPT/RETURN_TO_FORMATION), ShotType, PassType. PlayerEntity s facing/moveDir/aimDir (separátne), baseFormationPosition/dynamicFormationPosition/supportTarget/markingTarget/personalSpaceRadius/tacticalRole/firstTouchQuality/utilityScores/pokeCooldown/shootPhase. BallState s ballState/touchTimer.
+- **formation.ts**: 1-2-1 futsal (GK, fixo, leftAla, rightAla, pivot), metre→pixely cez m().
+- **player.ts**: metres-based applyMovement (accel/decel/inertia, backwardSpeed, defensiveStrafeSpeed, runWithBall/sprintWithBall), separátne facing/moveDir/aimDir, turnRate (no ball/with ball/sprint), sharp-turn penalty pri šprinte. Touch-based dribling (re-touch interval, lopta ďalej pri šprinte, nie prilepená). Prvý dotyk (computeFirstTouch — kvalita z rýchlosti/uhla/tlaku/výšky, zlý→odraz do priestoru). Pasce: shortPass/drivenPass/throughPass/lobPass s obmedzenou asistenciou (maxAssistAngle, through-ball lead). shoot s windup/contact/recovery fázami, presnosť z rovnováhy/rýchlosti/uhla/tlaku/vzdialenosti/nabitia, typy (normal/placed/power/firstTime/lob), deterministický error cez seeded RNG. containMovement (jockey), startTackle/pokeTackle/tryTackle, GK protection (nemožno oberať GK). Mäkká separácia (nie tvrdé odrazy).
+- **ball.ts**: touchTimer/ballState tick, metre→px/s konverzia.
+- **teamTactics.ts** (TeamTacticalController): decideTeamPhase (9 fáz: BUILD_UP/ATTACK/FINAL_THIRD/ATTACKING_TRANSITION/DEFENSIVE_TRANSITION/ORGANIZED_DEFENSE/HIGH_PRESS/SET_PIECE_*), updateTeamTactics nastaví dynamicFormationPosition (šírka/hĺbka podľa fázy), priradí ball-chaser + cover, marking assignments. Pri strate lopty: najbližší napáda, druhý kryje dráhu, fixo chráni stred.
+- **goalkeeper.ts** (GoalkeeperController): poziciovanie z lopty/stred brány/vzdialenosti/streleckého uhla/útočníkov, reakčný čas (gkReactionMs — nereaguje okamžite), rushOut pre voľnú loptu, dive (low/high), distribúcia (hand/kick), 4s limit.
+- **ai.ts**: UTILITY-BASED — scoreWithBall/scoreOffBall počíta utility 0..1 pre každú akciu (nie if/else), pickBest vyberá najvyššie. Rozhodovacie intervaly podľa náročnosti (seeded jitter). Anti-clustering (clustered→zníž SUPPORT/MOVE_WIDE). Role-aware: fixo vzadu, alas šírka, pivot stred/vysoko. AI číta iba aktuálny stav.
+- **rules.ts**: futsal — BEZ ofsajdu (isReceiverOffside/awardOffside = no-op), aut sa rozohráva nohou, ball fully crosses line (BALL_RADIUS), 2×3min default, penalty/free kick/corner/goal kick zachované.
+- **simulation.ts**: stepMulti order — (1) updateTeamTactics oba tímy, (2) human inputs, (3) AI outfield, (4) updateGoalkeeper, (5) integratePlayer, (6) mäkké kolízie + foul detekcia (slide-into-player → awardFoul, tackle-from-behind), (7) ball (dribble/integrateBall), (8) GK hold timer (4s→kop od brány), (9) resolvePossession/firstTouch/ballState, (10) field events, (11) match flow + penalty shootout. toggleDebug(state). humanPlayers:0 pre plne AI. Váhové prepínanie hráča (time-to-ball, distance, direction, defensive position, own-goal distance, tactical role — nie len nearest).
+- **renderer.ts**: renderDebug overlay (AI target crosses, collision circles, velocity vectors, marking lines, utility score text, pass lanes, ball state + team phase text). Debug toggle F3/B v GameContaineri.
+- **spriteSheet.ts**: role check 'GK' → 'goalkeeper'.
+- **constants.ts**: pixel geometry + re-export taktických hodnôt z tacticsConfig.
+- **tests/futsal.sim.test.ts**: 100 AI vs AI zápasov (humanPlayers:0, empty inputs). Kontroluje: dokončiteľnosť (≥90/100), lopta nezaseknutá (len počas play), GK v zóne, tímy tvoria prihrávky (avgPasses>5), anti-clustering (min distance>m), skóre rozumné, determinizmus (rovnaký seed→rovnaký výsledok), reset formácie po góle.
+- Existujúce tests aktualizované (offside→no-offside pre futsal, pass type param, role 'goalkeeper', PENALTY_SPOT_X, crossbar z).
+
+Stage Summary:
+- Futsal 5v5 simulácia: roly (goalkeeper/fixo/leftAla/rightAla/pivot), 1-2-1 formácia, metres-based fyzika (1m=32px), separátne body/move/aim smery, zrýchlenie/brzdenie/zotrvačnosť/otáčanie, mäkké kolízie.
+- Lopta samostatná entita, touch-based dribling, prvý dotyk (kvalita), stavy lopty (6).
+- Prihrávky (4 typy, obmedzená asistencia, through-ball predikcia), streľba (fázy, 5 typov, presnosť), obrana (contain/standing/poke/slide, fauly).
+- TeamTacticalController (9 fáz), utility-based AI (8+10 akcií), GoalkeeperController (poziciovanie, reakčný čas, distribúcia).
+- Váhové prepínanie, pravidlá (no offside, 2×3min, foot throw-in, ball fully crosses), debug režim (F3/B).
+- 34/34 testov (30 existujúcich + 4 futsal sim s 100 zápasmi), tsc čistý, lint OK.
+- Verifikácia v browseri: futsal roly, tímové fázy sa menia (HIGH_PRESS/DEFENSIVE_TRANSITION...), pozície rolou viazané, góly padajú, debug overlay (VLM potvrdil všetky prvky).

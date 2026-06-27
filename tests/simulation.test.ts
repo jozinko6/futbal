@@ -22,6 +22,7 @@ import {
   pass,
   isReceiverOffside,
   awardOffside,
+  PENALTY_SPOT_X,
   setupFreeKick,
   setupPenalty,
   awardFoul,
@@ -148,7 +149,7 @@ describe('field boundaries & goals', () => {
     s.ball.ownerId = null;
     s.ball.x = FIELD_X + 6;
     s.ball.y = FIELD_CY;
-    s.ball.z = 60; // above crossbar
+    s.ball.z = 90; // above crossbar (CROSSBAR_Z ~70)
     s.ball.vz = 0;
     s.ball.vx = -400;
     s.ball.vy = 0;
@@ -302,41 +303,20 @@ describe('determinism', () => {
 });
 
 describe('offside', () => {
-  it('flags a receiver past the second-last defender as offside', () => {
+  it('futsal: offside is NEVER called (no offside rule)', () => {
     const s = createMatchState({ seed: 42 });
     s.period = 'play';
-    // Passer near halfway with the ball.
-    const passer = s.players[4]; // home FWD
+    const passer = s.players[4];
     passer.x = FIELD_CX + 10;
     passer.y = FIELD_CY;
     passer.hasBall = true;
     s.ball.ownerId = passer.id;
-    s.ball.x = passer.x;
-    s.ball.y = passer.y;
-    // Receiver deep in the away half.
-    const receiver = s.players[3]; // home MID
-    receiver.x = FIELD_RIGHT - 120;
+    const receiver = s.players[3];
+    receiver.x = FIELD_RIGHT - 120; // deep, would be offside in football
     receiver.y = FIELD_CY;
-    // Away non-GK defenders shallow; away GK deep (nearest goal).
-    for (const p of s.players) {
-      if (p.team === 1 && p.role !== 'GK') {
-        p.x = FIELD_CX + 200;
-        p.y = FIELD_CY + 180;
-      }
-    }
-    // Passing records the offside snapshot.
-    pass(passer, receiver.x, receiver.y, s, false);
-    expect(s.offsideCheck).not.toBeNull();
-    // Judge the receiver directly against the snapshot.
-    expect(isReceiverOffside(s, receiver)).toBe(true);
-    // Award -> indirect free kick to the away team at the receiver's spot.
-    awardOffside(s, receiver.x, receiver.y);
-    expect(s.offsides[0]).toBe(1);
-    expect(s.banner).toBe('OFSAJD');
-    expect(s.restartType).toBe('freeKick');
-    expect(s.restartTeam).toBe(1);
-    // The check is consumed after the award.
-    expect(s.offsideCheck).toBeNull();
+    pass(passer, receiver.x, receiver.y, s, 'short');
+    // Futsal has no offside — receiver is never flagged.
+    expect(isReceiverOffside(s, receiver)).toBe(false);
   });
 
   it('does NOT flag a receiver level with or behind the passer', () => {
@@ -348,30 +328,9 @@ describe('offside', () => {
     passer.hasBall = true;
     s.ball.ownerId = passer.id;
     const receiver = s.players[3];
-    receiver.x = FIELD_CX + 5; // behind the passer
+    receiver.x = FIELD_CX + 5;
     receiver.y = FIELD_CY;
-    for (const p of s.players) {
-      if (p.team === 1 && p.role !== 'GK') {
-        p.x = FIELD_CX + 300;
-        p.y = FIELD_CY;
-      }
-    }
-    pass(passer, receiver.x, receiver.y, s, false);
-    expect(isReceiverOffside(s, receiver)).toBe(false);
-  });
-
-  it('does NOT flag a receiver in their own half', () => {
-    const s = createMatchState({ seed: 44 });
-    s.period = 'play';
-    const passer = s.players[4];
-    passer.x = FIELD_CX - 20; // passer in own half
-    passer.y = FIELD_CY;
-    passer.hasBall = true;
-    s.ball.ownerId = passer.id;
-    const receiver = s.players[3];
-    receiver.x = FIELD_CX - 60; // receiver also in own half
-    receiver.y = FIELD_CY;
-    pass(passer, receiver.x, receiver.y, s, false);
+    pass(passer, receiver.x, receiver.y, s, 'short');
     expect(isReceiverOffside(s, receiver)).toBe(false);
   });
 });
@@ -492,7 +451,7 @@ describe('free kicks & penalties', () => {
     expect(s.restartType).toBe('penalty');
     expect(s.restartTeam).toBe(0);
     // Home takes the penalty at the right penalty spot (near opp goal).
-    expect(s.ball.x).toBeCloseTo(FIELD_RIGHT - 96, 0);
+    expect(s.ball.x).toBeCloseTo(FIELD_RIGHT - PENALTY_SPOT_X, 0);
     expect(s.ball.y).toBeCloseTo(FIELD_CY, 0);
   });
 
@@ -521,7 +480,7 @@ describe('goalkeeper possession', () => {
   it('outfield players cannot dispossess a goalkeeper', () => {
     const s = createMatchState({ seed: 65 });
     s.period = 'play';
-    const gk = s.players.find((p) => p.role === 'GK' && p.team === 0)!;
+    const gk = s.players.find((p) => p.role === 'goalkeeper' && p.team === 0)!;
     gk.x = FIELD_X + 60;
     gk.y = FIELD_CY;
     s.ball.ownerId = gk.id;
@@ -530,7 +489,7 @@ describe('goalkeeper possession', () => {
     s.ball.possessionShield = 0;
     s.ball.shieldTeam = null;
     s.ball.releaseCooldown = 0;
-    const opp = s.players.find((p) => p.team === 1 && p.role !== 'GK')!;
+    const opp = s.players.find((p) => p.team === 1 && p.role !== 'goalkeeper')!;
     opp.x = gk.x + 4;
     opp.y = gk.y;
     // tryTackle should fail against a GK owner.
@@ -542,7 +501,7 @@ describe('goalkeeper possession', () => {
   it('goalkeeper is forced to release after GK_HOLD_MAX seconds', () => {
     const s = createMatchState({ seed: 66 });
     s.period = 'play';
-    const gk = s.players.find((p) => p.role === 'GK' && p.team === 0)!;
+    const gk = s.players.find((p) => p.role === 'goalkeeper' && p.team === 0)!;
     gk.x = FIELD_X + 60;
     gk.y = FIELD_CY;
     s.ball.ownerId = gk.id;
