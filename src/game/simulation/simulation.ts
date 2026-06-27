@@ -21,6 +21,7 @@ import {
 import {
   applyMovement, dribble, integratePlayer, resolvePlayerCollision, resolvePossession,
   shoot, pass, executePassKick, executeShotKick, startTackle, tryTackle, assistedPassTarget,
+  shoulderChallenge, standingTackle, pokeTackle,
 } from './player';
 import { integrateBall } from './ball';
 import { aiAct } from './ai';
@@ -205,10 +206,27 @@ function applyController(state: MatchState, c: HumanController, input: InputFram
       c.chargeTime = 0;
     }
   } else {
+    // --- DEFENSE (no ball) ---
+    // A button (J/pass) = contextual: shoulder challenge, standing tackle, or poke.
+    if (passPressed) {
+      const ball = state.ball;
+      const owner = ball.ownerId != null ? state.players[ball.ownerId] : null;
+      if (owner && owner.team !== cur.team && dist(cur.x, cur.y, owner.x, owner.y) <= m(1.5)) {
+        // Close to ball carrier → standing tackle.
+        standingTackle(cur, state);
+      } else if (ball.ownerId == null && dist(cur.x, cur.y, ball.x, ball.y) <= m(1.5)) {
+        // Close to loose ball → poke tackle.
+        pokeTackle(cur, state);
+      } else {
+        // Otherwise → shoulder challenge (push nearest opponent).
+        shoulderChallenge(cur, state);
+      }
+    }
+    // B button (K/shoot) = slide tackle.
     if (shootPressed) {
       const dirX = input.moveX || Math.cos(cur.facing);
       const dirY = input.moveY || Math.sin(cur.facing);
-      if (!startTackle(cur, dirX, dirY)) tryTackle(cur, state);
+      startTackle(cur, dirX, dirY);
     }
     c.chargeTime = 0;
   }

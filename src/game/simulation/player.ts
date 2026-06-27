@@ -398,6 +398,69 @@ export function dribble(state: MatchState, dt: number): void {
 
 // --- Tackles & defense -----------------------------------------------------
 
+/** Shoulder challenge — push an adjacent opponent, may knock the ball loose.
+ *  Quick action, low recovery. Used when running beside the ball carrier. */
+export function shoulderChallenge(p: PlayerEntity, state: MatchState): boolean {
+  if (p.stunnedTime > 0 || p.actionLock > 0) return false;
+  const ball = state.ball;
+  // Find nearest opponent within shoulder range.
+  let target: PlayerEntity | null = null;
+  let bd = m(1.2);
+  for (const o of state.players) {
+    if (o.team === p.team || o.stunnedTime > 0) continue;
+    const d = dist(p.x, p.y, o.x, o.y);
+    if (d < bd) { bd = d; target = o; }
+  }
+  if (!target) return false;
+  // Push the opponent away.
+  const dx = target.x - p.x;
+  const dy = target.y - p.y;
+  const d = Math.hypot(dx, dy) || 1;
+  const pushForce = mps(3);
+  target.vx += (dx / d) * pushForce;
+  target.vy += (dy / d) * pushForce;
+  // If the opponent had the ball, there's a chance to knock it loose.
+  if (ball.ownerId === target.id && target.role !== 'goalkeeper') {
+    // 40% chance to dispossess on shoulder challenge.
+    const [nr, roll] = rngFloat(state.rngState, 0, 1);
+    state.rngState = nr;
+    if (roll < 0.4) {
+      dispossess(target, state);
+    }
+  }
+  p.state = 'tackle';
+  p.actionLock = 0.15; // very short
+  return true;
+}
+
+/** Standing tackle — quick, close-range ball steal. Low recovery. */
+export function standingTackle(tackler: PlayerEntity, state: MatchState): boolean {
+  if (tackler.stunnedTime > 0 || tackler.actionLock > 0) return false;
+  const ball = state.ball;
+  if (ball.possessionShield > 0 && ball.shieldTeam != null && ball.shieldTeam !== tackler.team) return false;
+  const owner = ball.ownerId != null ? state.players[ball.ownerId] : null;
+  if (owner && owner.team !== tackler.team && owner.role !== 'goalkeeper' &&
+      dist(tackler.x, tackler.y, owner.x, owner.y) <= m(DEFENSE.tackleRadius)) {
+    // 60% chance for standing tackle success.
+    const [nr, roll] = rngFloat(state.rngState, 0, 1);
+    state.rngState = nr;
+    if (roll < 0.6) {
+      dispossess(owner, state);
+      tackler.state = 'tackle';
+      tackler.actionLock = 0.2;
+      return true;
+    }
+  }
+  // Also try to poke a loose ball.
+  if (ball.ownerId == null && dist(tackler.x, tackler.y, ball.x, ball.y) <= m(DEFENSE.pokeRadius)) {
+    pokeTackle(tackler, state);
+    return true;
+  }
+  tackler.state = 'tackle';
+  tackler.actionLock = 0.2;
+  return false;
+}
+
 export function startTackle(p: PlayerEntity, dirX: number, dirY: number): boolean {
   if (p.slideCooldown > 0 || p.stunnedTime > 0 || p.actionLock > 0 || p.role === 'goalkeeper') return false;
   const n = len(dirX, dirY) || 1;
