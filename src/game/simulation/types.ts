@@ -160,6 +160,12 @@ export interface HumanController {
   prevHighPass: boolean;
   prevSwitch: boolean;
   autoSwitch: boolean;
+  /** Tick of the last switch (auto or manual). */
+  lastSwitchTick: number;
+  /** Auto-switch is blocked until this tick. */
+  autoSwitchBlockedUntil: number;
+  /** Manual switch override stays until this tick. */
+  manualSwitchLockUntil: number;
 }
 
 export interface MatchState {

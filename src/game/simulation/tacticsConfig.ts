@@ -51,22 +51,21 @@ export const MOVEMENT = {
   personalSpace: 1.4,
 } as const;
 
-// --- Stamina (0..100) -----------------------------------------------------
+// --- Stamina (0..100) — ARCADE: doesn't block sprint, just slightly slows ---
 export const STAMINA = {
   max: 100,
-  /** Drain per second while sprinting (with ball drains a bit more). */
-  sprintDrain: 18,
-  sprintDrainWithBall: 22,
-  /** Minimal drain while running. */
-  runDrain: 4,
-  /** Regen per second when jogging / walking / idle. */
-  jogRegen: 10,
-  walkRegen: 16,
-  idleRegen: 22,
-  /** Below this threshold, sprint is blocked and accel is reduced. */
-  fatigueThreshold: 25,
+  sprintDrain: 12,
+  sprintDrainWithBall: 15,
+  runDrain: 2,
+  jogRegen: 15,
+  walkRegen: 20,
+  idleRegen: 25,
+  /** Below this, max speed is slightly reduced (NOT blocked). */
+  fatigueThreshold: 20,
+  /** Speed multiplier when fully fatigued (0..1). */
+  fatigueSpeedMul: 0.85,
   /** Accel multiplier when fatigued. */
-  fatigueAccelMul: 0.7,
+  fatigueAccelMul: 0.85,
 } as const;
 
 // --- Ball (m/s) -----------------------------------------------------------

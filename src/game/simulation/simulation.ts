@@ -42,7 +42,8 @@ export interface CreateMatchOptions {
 }
 
 function makeController(team: Team, activeId: number, autoSwitch: boolean): HumanController {
-  return { team, activeId, chargeTime: 0, prevShootHeld: false, prevPass: false, prevHighPass: false, prevSwitch: false, autoSwitch };
+  return { team, activeId, chargeTime: 0, prevShootHeld: false, prevPass: false, prevHighPass: false, prevSwitch: false, autoSwitch,
+    lastSwitchTick: 0, autoSwitchBlockedUntil: 0, manualSwitchLockUntil: 0 };
 }
 
 export function createMatchState(opts: CreateMatchOptions = {}): MatchState {
@@ -133,8 +134,18 @@ function applyController(state: MatchState, c: HumanController, input: InputFram
   const active = state.players[c.activeId];
   if (!active) return;
   const switchPressed = input.switchPlayer && !c.prevSwitch;
-  if (switchPressed) switchToNext(state, c);
-  else if (c.autoSwitch && autoSwitchShouldTrigger(state, c)) switchToNearest(state, c);
+  if (switchPressed) {
+    switchToNext(state, c);
+    c.lastSwitchTick = state.tick;
+    c.manualSwitchLockUntil = state.tick + 48; // 0.8s @ 60fps
+    c.autoSwitchBlockedUntil = state.tick + 39; // 0.65s
+  } else if (c.autoSwitch && state.tick > c.autoSwitchBlockedUntil && state.tick > c.manualSwitchLockUntil) {
+    if (autoSwitchShouldTrigger(state, c)) {
+      switchToNearest(state, c);
+      c.lastSwitchTick = state.tick;
+      c.autoSwitchBlockedUntil = state.tick + 39; // 0.65s cooldown
+    }
+  }
   c.prevSwitch = input.switchPlayer;
 
   const cur = state.players[c.activeId] ?? active;
