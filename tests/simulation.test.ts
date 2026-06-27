@@ -510,9 +510,16 @@ describe('goalkeeper possession', () => {
     s.ball.gkHoldTime = 0;
     s.ball.possessionShield = 0;
     s.ball.shieldTeam = null;
+    // Move all other players far away so no fouls/interference occur.
+    for (const p of s.players) {
+      if (p.id === gk.id) continue;
+      p.x = FIELD_X + 800;
+      p.y = FIELD_CY + 200;
+      p.vx = 0; p.vy = 0;
+      p.stunnedTime = 5;
+    }
     // Run past the hold limit.
     runFor(s, GK_HOLD_MAX + 0.3, emptyInput(0));
-    // Should have triggered a goal kick turnover to the away team.
     expect(s.restartType).toBe('goalKick');
     expect(s.restartTeam).toBe(1);
   });

@@ -29,6 +29,33 @@ export type AiAction = WithBallAction | OffBallAction | 'idle';
 export type ShotType = 'normal' | 'placed' | 'power' | 'firstTime' | 'lob';
 export type PassType = 'short' | 'driven' | 'through' | 'lob';
 
+/**
+ * Explicit player action with phased execution. The ball is kicked only at the
+ * contact tick; the animation and kick sound are synchronised to that tick.
+ * Before contact the action can be cancelled (e.g. by a tackle); during and
+ * after contact the aim cannot change dramatically.
+ */
+export interface PlayerAction {
+  type:
+    | 'shortPass' | 'drivenPass' | 'throughPass' | 'lobPass'
+    | 'placedShot' | 'powerShot' | 'lobShot' | 'firstTimeShot'
+    | 'pokeTackle' | 'standingTackle' | 'slideTackle';
+  phase: 'windup' | 'contact' | 'recovery';
+  startedAtTick: number;
+  contactAtTick: number;
+  finishAtTick: number;
+  aimX: number;
+  aimY: number;
+  power: number;
+  /** Whether the ball has already been kicked/touched in this action. */
+  contacted: boolean;
+}
+
+/** Result of attempting to control an incoming ball (first touch). */
+export type FirstTouchResult =
+  | { controlled: true; quality: number }
+  | { controlled: false; quality: number; deflectionVx: number; deflectionVy: number };
+
 export interface BallState {
   x: number; y: number; z: number;
   vx: number; vy: number; vz: number;
@@ -82,6 +109,16 @@ export interface PlayerEntity {
   pokeCooldown: number;
   /** Windup/contact/recovery phase timer for shooting. */
   shootPhase: number;
+  /** Currently executing phased action (pass/shot/tackle), or null. */
+  currentAction: PlayerAction | null;
+  /** Tick of the last ball contact (kick) — used to fire the kick sound. */
+  lastContactTick: number;
+  /** Stamina 0..100 (sprint drains, walk/jog regen). */
+  stamina: number;
+  /** Internal flags set by applyMovement, consumed by integratePlayer for stamina. */
+  _sprintThisTick: boolean;
+  _movingThisTick: boolean;
+  _hasBallThisTick: boolean;
 }
 
 export type MatchPeriod =

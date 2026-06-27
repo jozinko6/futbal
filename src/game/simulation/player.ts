@@ -5,15 +5,16 @@
  */
 import {
   MOVEMENT, BALL, DEFENSE, PASSING, SHOOTING, METER_PX, m, mps,
-  DIFFICULTY_PARAMS,
+  DIFFICULTY_PARAMS, STAMINA,
   FIELD_CX, FIELD_CY, CONTROL_RADIUS, TACKLE_RADIUS,
 } from './constants';
 import type {
-  AiAction, BallState, InputFrame, MatchState, PassType, PlayerEntity, ShotType, Team,
+  AiAction, BallState, FirstTouchResult, InputFrame, MatchState, PassType, PlayerAction, PlayerEntity, ShotType, Team,
 } from './types';
 import { angleTo, approachAngle, dist, len } from './math';
 import { kickBall } from './ball';
 import { rngFloat } from './rng';
+import { startAction } from './actionSystem';
 
 // --- Movement --------------------------------------------------------------
 
@@ -33,13 +34,16 @@ export function applyMovement(
   if (p.state === 'tackle' || p.state === 'slide') return;
 
   const mag = len(moveX, moveY);
+  // Stamina: fatigue blocks sprint and reduces acceleration.
+  const fatigued = p.stamina < STAMINA.fatigueThreshold;
+  const canSprint = sprint && !fatigued;
   // Determine target speed from SI config.
   let targetSpeed = 0;
   if (mag > 0.01) {
     const movingBackward = isBackward(p, moveX, moveY);
     if (hasBall) {
-      targetSpeed = sprint ? mps(MOVEMENT.sprintWithBallSpeed) : mps(MOVEMENT.runWithBallSpeed);
-    } else if (sprint) {
+      targetSpeed = canSprint ? mps(MOVEMENT.sprintWithBallSpeed) : mps(MOVEMENT.runWithBallSpeed);
+    } else if (canSprint) {
       targetSpeed = mps(MOVEMENT.sprintSpeed);
     } else if (movingBackward) {
       targetSpeed = mps(MOVEMENT.backwardSpeed);
@@ -53,7 +57,8 @@ export function applyMovement(
     const ny = moveY / mag;
     const desiredVx = nx * targetSpeed;
     const desiredVy = ny * targetSpeed;
-    const accelRate = (sprint ? MOVEMENT.sprintAcceleration : MOVEMENT.acceleration) * METER_PX;
+    let accelRate = (canSprint ? MOVEMENT.sprintAcceleration : MOVEMENT.acceleration) * METER_PX;
+    if (fatigued) accelRate *= STAMINA.fatigueAccelMul;
     p.vx = approach(p.vx, desiredVx, accelRate * dt);
     p.vy = approach(p.vy, desiredVy, accelRate * dt);
 
@@ -63,20 +68,24 @@ export function applyMovement(
     // Body facing turns at a rate depending on ball/sprint.
     const desiredFacing = p.moveDir;
     let turnRate: number = hasBall ? MOVEMENT.turnRateWithBall : MOVEMENT.turnRate;
-    if (sprint) turnRate = MOVEMENT.turnRateSprint;
+    if (canSprint) turnRate = MOVEMENT.turnRateSprint;
     // Sharp turn at sprint → lose speed.
     const dAng = Math.abs(approachAngleDelta(p.facing, desiredFacing));
-    if (sprint && dAng > MOVEMENT.sharpTurnThreshold) {
+    if (canSprint && dAng > MOVEMENT.sharpTurnThreshold) {
       p.vx *= MOVEMENT.sharpTurnPenalty;
       p.vy *= MOVEMENT.sharpTurnPenalty;
     }
     p.facing = approachAngle(p.facing, desiredFacing, turnRate * dt);
 
-    p.state = sprint ? 'sprint' : 'run';
+    p.state = canSprint ? 'sprint' : 'run';
   } else {
     decel(p, dt);
     p.state = 'idle';
   }
+  // Stamina update for this step is applied in integratePlayer (once per tick).
+  p._sprintThisTick = canSprint;
+  p._movingThisTick = mag > 0.01;
+  p._hasBallThisTick = hasBall;
 }
 
 function isBackward(p: PlayerEntity, mx: number, my: number): boolean {
@@ -124,6 +133,24 @@ export function containMovement(p: PlayerEntity, ballX: number, ballY: number, d
 }
 
 export function integratePlayer(p: PlayerEntity, dt: number): void {
+  // Stamina: drain on sprint/run, regen on jog/walk/idle.
+  if (p._sprintThisTick) {
+    const drain = p._hasBallThisTick ? STAMINA.sprintDrainWithBall : STAMINA.sprintDrain;
+    p.stamina = Math.max(0, p.stamina - drain * dt);
+  } else if (p._movingThisTick) {
+    // Running drains a little; jogging (with ball, slow) regens.
+    if (p._hasBallThisTick && Math.hypot(p.vx, p.vy) < mps(MOVEMENT.jogSpeed)) {
+      p.stamina = Math.min(STAMINA.max, p.stamina + STAMINA.jogRegen * dt);
+    } else {
+      p.stamina = Math.max(0, p.stamina - STAMINA.runDrain * dt);
+    }
+  } else {
+    p.stamina = Math.min(STAMINA.max, p.stamina + STAMINA.idleRegen * dt);
+  }
+  // Reset per-tick flags (set again next applyMovement call).
+  p._sprintThisTick = false;
+  p._movingThisTick = false;
+  p._hasBallThisTick = false;
   // Slide tackle dash.
   if ((p.state === 'tackle' || p.state === 'slide') && p.diveTime > 0) {
     p.vx = p.diveDir.x * mps(DEFENSE.slideSpeed);
@@ -191,7 +218,9 @@ export function resolvePlayerCollision(a: PlayerEntity, b: PlayerEntity): void {
 
 // --- Possession & first touch ---------------------------------------------
 
-/** Re-evaluate which player holds the ball (proximity + control radius). */
+/** Re-evaluate which player holds the ball (proximity + control radius).
+ *  Uses computeFirstTouch() which returns a FirstTouchResult — only a
+ *  `controlled` result assigns ownership; a deflection leaves the ball loose. */
 export function resolvePossession(state: MatchState): void {
   const ball = state.ball;
   if (ball.releaseCooldown > 0) return;
@@ -209,18 +238,33 @@ export function resolvePossession(state: MatchState): void {
   }
   if (best) {
     if (ball.ownerId !== best.id) {
-      // First touch: compute quality from incoming ball speed/angle/pressure.
-      computeFirstTouch(best, ball, state);
-      ball.ownerId = best.id;
-      ball.vx = 0; ball.vy = 0; ball.vz = 0;
-      ball.touchTimer = BALL.dribbleTouchInterval;
-      if (best.role === 'goalkeeper') { ball.gkHoldTime = 0; ball.ballState = 'GOALKEEPER_CONTROLLED'; }
-      else ball.ballState = 'CONTROLLED';
-      ball.indirect = false;
+      // First touch: decide controlled vs deflection.
+      const result = computeFirstTouch(best, ball, state);
+      best.firstTouchQuality = result.quality;
+      if (result.controlled) {
+        ball.ownerId = best.id;
+        ball.vx = 0; ball.vy = 0; ball.vz = 0;
+        ball.touchTimer = 0; // first dribble touch happens next tick
+        if (best.role === 'goalkeeper') { ball.gkHoldTime = 0; ball.ballState = 'GOALKEEPER_CONTROLLED'; }
+        else ball.ballState = 'CONTROLLED';
+        ball.indirect = false;
+      } else {
+        // Bad first touch: deflect the ball into free space; do NOT assign
+        // ownership — the ball stays loose so the opponent can react.
+        kickBall(ball, result.deflectionVx, result.deflectionVy, Math.hypot(result.deflectionVx, result.deflectionVy), 0);
+        ball.ownerId = null;
+        ball.releaseCooldown = 0.25;
+        ball.ballState = 'LOOSE';
+        // Brief balance loss for the player who mishandled.
+        best.stunnedTime = Math.max(best.stunnedTime, 0.15);
+      }
+    } else {
+      // Already the owner — keep flags in sync.
+      for (const p of state.players) p.hasBall = p.id === best.id;
+      return;
     }
     for (const p of state.players) p.hasBall = p.id === best.id;
   } else {
-    // Loose — possibly contested if two opponents very close.
     ball.ownerId = null;
     for (const p of state.players) p.hasBall = false;
     let opp = 0;
@@ -231,11 +275,15 @@ export function resolvePossession(state: MatchState): void {
   }
 }
 
-/** First-touch quality (0..1). Bad touch → ball deflects into space. */
-function computeFirstTouch(p: PlayerEntity, ball: BallState, state: MatchState): void {
+/** Compute the first-touch result for a player meeting an incoming ball.
+ *  Quality depends on pass speed, ball height, arrival angle, body direction,
+ *  movement, opponent pressure, pass type and stamina. A good touch directs
+ *  the ball into the player's movement and slightly slows it; a bad touch
+ *  deflects it 0.5–1.8 m into free space. */
+function computeFirstTouch(p: PlayerEntity, ball: BallState, state: MatchState): FirstTouchResult {
   const incomingSpeed = len(ball.vx, ball.vy);
-  const ang = Math.abs(approachAngleDelta(p.facing, angleTo(ball.x, ball.y, p.x, p.y)));
-  // Pressure from nearest opponent.
+  const arrivalAng = angleTo(ball.x, ball.y, p.x, p.y);
+  const ang = Math.abs(approachAngleDelta(p.facing, arrivalAng));
   let oppDist = Infinity;
   for (const o of state.players) {
     if (o.team === p.team || o.stunnedTime > 0) continue;
@@ -243,55 +291,104 @@ function computeFirstTouch(p: PlayerEntity, ball: BallState, state: MatchState):
   }
   const pressure = oppDist < m(1.5) ? 1 - oppDist / m(1.5) : 0;
   const speedFactor = Math.min(1, incomingSpeed / mps(BALL.passSpeed.driven));
-  let q = 1 - 0.3 * speedFactor - 0.2 * (ang / Math.PI) - 0.3 * pressure - 0.2 * (ball.z / m(1.5));
-  q = Math.max(0.2, Math.min(1, q));
+  const heightFactor = Math.min(1, ball.z / m(1.5));
+  const movingAgainst = Math.abs(approachAngleDelta(p.moveDir, arrivalAng + Math.PI)) > Math.PI / 2 ? 0.15 : 0;
+  const fatigue = 1 - p.stamina / 100;
+  let q = 1
+    - 0.25 * speedFactor
+    - 0.15 * (ang / Math.PI)
+    - 0.25 * pressure
+    - 0.20 * heightFactor
+    - 0.10 * fatigue
+    - movingAgainst;
+  q = Math.max(0.15, Math.min(1, q));
   p.firstTouchQuality = q;
-  // Bad touch → deflect ball away.
-  if (q < 0.5) {
-    const away = angleTo(p.x, p.y, ball.x, ball.y);
-    const power = mps(BALL.passSpeed.short) * (1 - q);
-    kickBall(ball, Math.cos(away), Math.sin(away), power, 0);
-    p.hasBall = false;
-    ball.ownerId = null;
-    ball.releaseCooldown = 0.2;
-    ball.ballState = 'LOOSE';
+  if (q >= 0.5) {
+    return { controlled: true, quality: q };
   }
+  // Bad touch: deflect into free space, 0.5–1.8 m worth of impulse.
+  const away = angleTo(p.x, p.y, ball.x, ball.y);
+  // Bias the deflection away from the nearest opponent.
+  const opp = nearestOpponent(state, p.team, p.x, p.y);
+  let deflAng = away;
+  if (opp) {
+    const oppAng = angleTo(p.x, p.y, opp.x, opp.y);
+    // Deflect opposite to the opponent.
+    deflAng = oppAng + Math.PI;
+  }
+  const dist01 = m(0.5) + (1 - q) * m(1.3); // 0.5..1.8 m worth
+  const power = mps(BALL.passSpeed.short) * (0.4 + (1 - q) * 0.5);
+  void dist01;
+  return {
+    controlled: false,
+    quality: q,
+    deflectionVx: Math.cos(deflAng) * power,
+    deflectionVy: Math.sin(deflAng) * power,
+  };
 }
 
-/** Touch-based dribbling: re-touch the ball at intervals, ahead of the player. */
+/**
+ * Touch-based dribbling using small physical impulses (NOT interpolation or
+ * teleport). The ball is an independent physics entity; the dribbler gives it
+ * a gentle forward nudge at a touch interval that depends on speed. At sprint
+ * the ball is pushed further ahead and is easier to poke away.
+ *
+ * Touch intervals (s):  walk 0.28–0.34, run 0.20–0.26, sprint 0.15–0.20.
+ * Touch distances (m):  walk 0.25–0.40, run 0.40–0.70, sprint 0.70–1.10.
+ */
 export function dribble(state: MatchState, dt: number): void {
   const ball = state.ball;
   if (ball.ownerId == null) return;
   const owner = state.players[ball.ownerId];
   if (!owner || owner.stunnedTime > 0) return;
+  // Integrate the ball as a free entity first (friction etc. handled in
+  // integrateBall — but the owner is carrying it, so we nudge it instead).
   ball.touchTimer -= dt;
   const sp = len(owner.vx, owner.vy);
-  if (ball.touchTimer <= 0 || sp > 1) {
-    // Re-touch: place ball ahead by touch distance scaled by speed.
-    const speedRatio = Math.min(1, sp / mps(MOVEMENT.sprintSpeed));
-    const ahead = m(BALL.dribbleTouchDistance.min) + speedRatio * m(BALL.dribbleTouchDistance.max - BALL.dribbleTouchDistance.min);
-    const tx = owner.x + Math.cos(owner.facing) * ahead;
-    const ty = owner.y + Math.sin(owner.facing) * ahead;
-    // Move ball toward the touch point (not glued).
-    const k = Math.min(1, 16 * dt);
-    ball.x += (tx - ball.x) * k;
-    ball.y += (ty - ball.y) * k;
-    ball.z = 0;
-    ball.vx = owner.vx * 0.8;
-    ball.vy = owner.vy * 0.8;
-    ball.touchTimer = Math.max(0.06, BALL.dribbleTouchInterval * (1 - speedRatio * 0.5));
-  } else {
-    // Between touches, ball coasts with the player's velocity (independent).
-    ball.x += ball.vx * dt;
-    ball.y += ball.vy * dt;
-    // Keep it near the owner.
-    const d = dist(ball.x, ball.y, owner.x, owner.y);
-    if (d > m(2.5)) {
-      // Ball got away — release.
-      ball.ownerId = null;
-      ball.releaseCooldown = 0.2;
-      ball.ballState = 'LOOSE';
+  const speedRatio = Math.min(1, sp / mps(MOVEMENT.sprintSpeed));
+  if (ball.touchTimer <= 0) {
+    // Re-touch: apply a small forward impulse (not a teleport).
+    const aheadDist = m(0.25) + speedRatio * m(0.85); // 0.25..1.10 m
+    const tx = owner.x + Math.cos(owner.facing) * aheadDist;
+    const ty = owner.y + Math.sin(owner.facing) * aheadDist;
+    // Sharp turn while dribbling → ball can skip sideways (deterministic).
+    const turnDelta = Math.abs(approachAngleDelta(owner.facing, owner.moveDir));
+    let nx = tx - ball.x;
+    let ny = ty - ball.y;
+    if (turnDelta > MOVEMENT.sharpTurnThreshold && sp > mps(MOVEMENT.runSpeed)) {
+      const perp = owner.facing + Math.PI / 2;
+      nx += Math.cos(perp) * m(0.15);
+      ny += Math.sin(perp) * m(0.15);
     }
+    const nlen = Math.hypot(nx, ny) || 1;
+    // Impulse magnitude: enough to reach the touch point in ~touchInterval s.
+    const interval = 0.34 - speedRatio * 0.18; // 0.34..0.16 s
+    const impulseSpeed = (aheadDist / interval);
+    ball.vx = (nx / nlen) * impulseSpeed + owner.vx * 0.3;
+    ball.vy = (ny / nlen) * impulseSpeed + owner.vy * 0.3;
+    ball.vz = 0;
+    ball.touchTimer = Math.max(0.10, interval);
+  }
+  // Ball coasts with its own velocity between touches.
+  ball.x += ball.vx * dt;
+  ball.y += ball.vy * dt;
+  ball.z = 0;
+  // Ground friction on the carried ball (light, so it doesn't run away).
+  const fric = mps(BALL.friction) * 0.4 * dt;
+  const bs = Math.hypot(ball.vx, ball.vy);
+  if (bs > 0) {
+    const ns = Math.max(0, bs - fric);
+    ball.vx *= ns / bs;
+    ball.vy *= ns / bs;
+  }
+  // If the ball gets too far from the owner (poke/deflection), release it.
+  const d = dist(ball.x, ball.y, owner.x, owner.y);
+  const maxCarry = m(1.5) + speedRatio * m(1.0); // up to ~2.5 m at sprint
+  if (d > maxCarry) {
+    ball.ownerId = null;
+    ball.releaseCooldown = 0.15;
+    ball.ballState = 'LOOSE';
+    for (const p of state.players) p.hasBall = false;
   }
 }
 
@@ -411,7 +508,19 @@ function nearestOpponentDist(state: MatchState, team: Team, x: number, y: number
   return bd;
 }
 
-/** Execute a pass of the given type toward (targetX, targetY). */
+function nearestOpponent(state: MatchState, team: Team, x: number, y: number): PlayerEntity | null {
+  let best: PlayerEntity | null = null;
+  let bd = Infinity;
+  for (const o of state.players) {
+    if (o.team === team) continue;
+    const d = dist(o.x, o.y, x, y);
+    if (d < bd) { bd = d; best = o; }
+  }
+  return best;
+}
+
+/** Begin a phased pass action. The ball is kicked at the contact tick (see
+ *  executeActionKick), not immediately. */
 export function pass(
   passer: PlayerEntity,
   targetX: number,
@@ -419,22 +528,29 @@ export function pass(
   state: MatchState,
   type: PassType,
 ): void {
-  const dx = targetX - passer.x;
-  const dy = targetY - passer.y;
+  const actionType: PlayerAction['type'] =
+    type === 'lob' ? 'lobPass' : type === 'through' ? 'throughPass' : type === 'driven' ? 'drivenPass' : 'shortPass';
   const power = mps(BALL.passSpeed[type] ?? BALL.passSpeed.short);
-  const vz = type === 'lob' ? mps(BALL.lobZ) : 0;
-  kickBall(state.ball, dx, dy, power, vz);
-  passer.hasBall = false;
-  passer.state = 'pass';
-  passer.actionLock = 0.16;
+  startAction(passer, state, actionType, targetX, targetY, power);
   passer.aimDir = angleTo(passer.x, passer.y, targetX, targetY);
-  // Futsal: no offside. (offsideCheck stays null.)
+  passer.hasBall = false;
+}
+
+/** Apply the kick of a pass action at the contact tick. */
+export function executePassKick(passer: PlayerEntity, state: MatchState, a: PlayerAction): void {
+  const type: PassType =
+    a.type === 'lobPass' ? 'lob' : a.type === 'throughPass' ? 'through' : a.type === 'drivenPass' ? 'driven' : 'short';
+  const dx = a.aimX - passer.x;
+  const dy = a.aimY - passer.y;
+  const vz = type === 'lob' ? mps(BALL.lobZ) : 0;
+  kickBall(state.ball, dx, dy, a.power, vz);
 }
 
 // --- Shooting (windup / contact / recovery) -------------------------------
 
-/** Begin a shot. Power scales with charge; accuracy degrades with factors.
- *  Deterministic error via the seeded RNG on MatchState. */
+/** Begin a phased shot action. The ball is kicked at the contact tick (see
+ *  executeShotKick), not immediately. Aim (targetX, targetY) is the real
+ *  target on the goal line (NOT a 1e6 sentinel). */
 export function shoot(
   shooter: PlayerEntity,
   targetX: number,
@@ -443,37 +559,50 @@ export function shoot(
   state: MatchState,
   shotType: ShotType = 'normal',
 ): void {
+  const actionType: PlayerAction['type'] =
+    shotType === 'placed' ? 'placedShot' :
+    shotType === 'lob' ? 'lobShot' :
+    shotType === 'firstTime' ? 'firstTimeShot' : 'powerShot';
+  // Accuracy error is computed at kick time (executeShotKick), so the aim
+  // stored here is the player's intended target.
+  const power = Math.min(BALL.shootMax, BALL.shootMin + charge * (BALL.shootMax - BALL.shootMin));
+  startAction(shooter, state, actionType, targetX, targetY, power);
+  shooter.hasBall = false;
+  shooter.aimDir = angleTo(shooter.x, shooter.y, targetX, targetY);
+}
+
+/** Apply the kick of a shot action at the contact tick. Accuracy degrades with
+ *  movement / pressure / distance / charge. Deterministic error via seeded RNG. */
+export function executeShotKick(shooter: PlayerEntity, state: MatchState, a: PlayerAction): void {
+  const shotType: ShotType =
+    a.type === 'placedShot' ? 'placed' :
+    a.type === 'lobShot' ? 'lob' :
+    a.type === 'firstTimeShot' ? 'firstTime' : 'power';
   const movingSpeed = len(shooter.vx, shooter.vy);
   const pressure = Math.max(0, 1 - nearestOpponentDist(state, shooter.team, shooter.x, shooter.y) / m(2));
-  const distToGoal = Math.hypot(targetX - shooter.x, targetY - shooter.y);
+  const distToGoal = Math.hypot(a.aimX - shooter.x, a.aimY - shooter.y);
   let err: number = SHOOTING.baseError;
   err += SHOOTING.movingError * Math.min(1, movingSpeed / mps(MOVEMENT.runSpeed));
   err += SHOOTING.pressureError * pressure;
   err += SHOOTING.distanceErrorPer10m * (distToGoal / m(10));
-  err += SHOOTING.chargeError * charge;
+  // Charge error is non-linear: full charge is NOT automatically best.
+  const chargeRatio = (a.power - BALL.shootMin) / (BALL.shootMax - BALL.shootMin);
+  err += SHOOTING.chargeError * chargeRatio * 1.4;
+  // Stamina (fatigue) worsens accuracy.
+  err += (1 - shooter.stamina / 100) * 0.08;
   if (shotType === 'power') err *= 1.3;
   if (shotType === 'placed') err *= 0.6;
   if (shotType === 'firstTime') err *= 1.2;
   const precision = DIFFICULTY_PARAMS[state.difficulty].precision;
   err = Math.max(0, err * (1 - precision));
 
-  let power = BALL.shootMin + charge * (BALL.shootMax - BALL.shootMin);
-  if (shotType === 'power') power *= 1.12;
-  if (shotType === 'placed') power *= 0.9;
-  power = Math.min(BALL.shootMax, power);
-
-  // Deterministic angular error from the seeded RNG.
   const [nextRng, roll] = rngFloat(state.rngState, 0, 1);
   state.rngState = nextRng;
-  const baseAng = angleTo(shooter.x, shooter.y, targetX, targetY);
+  const baseAng = angleTo(shooter.x, shooter.y, a.aimX, a.aimY);
   const finalAng = baseAng + (roll - 0.5) * err * 1.4;
   let vz = 0;
   if (shotType === 'lob') vz = mps(BALL.lobZ);
-  else vz = mps(1) + charge * mps(1.2);
-  kickBall(state.ball, Math.cos(finalAng), Math.sin(finalAng), mps(power), vz);
-  shooter.hasBall = false;
-  shooter.state = 'shoot';
-  shooter.actionLock = SHOOTING.recoveryTime;
-  shooter.shootPhase = SHOOTING.windupTime + SHOOTING.contactTime + SHOOTING.recoveryTime;
+  else vz = mps(1) + chargeRatio * mps(1.2);
+  kickBall(state.ball, Math.cos(finalAng), Math.sin(finalAng), a.power, vz);
   shooter.aimDir = finalAng;
 }

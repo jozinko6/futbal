@@ -51,6 +51,24 @@ export const MOVEMENT = {
   personalSpace: 1.4,
 } as const;
 
+// --- Stamina (0..100) -----------------------------------------------------
+export const STAMINA = {
+  max: 100,
+  /** Drain per second while sprinting (with ball drains a bit more). */
+  sprintDrain: 18,
+  sprintDrainWithBall: 22,
+  /** Minimal drain while running. */
+  runDrain: 4,
+  /** Regen per second when jogging / walking / idle. */
+  jogRegen: 10,
+  walkRegen: 16,
+  idleRegen: 22,
+  /** Below this threshold, sprint is blocked and accel is reduced. */
+  fatigueThreshold: 25,
+  /** Accel multiplier when fatigued. */
+  fatigueAccelMul: 0.7,
+} as const;
+
 // --- Ball (m/s) -----------------------------------------------------------
 export const BALL = {
   radius: 0.11,

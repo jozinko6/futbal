@@ -77,6 +77,12 @@ export function makePlayer(
     utilityScores: {},
     pokeCooldown: 0,
     shootPhase: 0,
+    currentAction: null,
+    lastContactTick: -1,
+    stamina: 100,
+    _sprintThisTick: false,
+    _movingThisTick: false,
+    _hasBallThisTick: false,
   };
 }
 

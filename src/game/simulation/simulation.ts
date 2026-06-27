@@ -20,12 +20,13 @@ import {
 } from './rules';
 import {
   applyMovement, dribble, integratePlayer, resolvePlayerCollision, resolvePossession,
-  shoot, pass, startTackle, tryTackle, assistedPassTarget,
+  shoot, pass, executePassKick, executeShotKick, startTackle, tryTackle, assistedPassTarget,
 } from './player';
 import { integrateBall } from './ball';
 import { aiAct } from './ai';
 import { updateTeamTactics } from './teamTactics';
 import { updateGoalkeeper } from './goalkeeper';
+import { stepAction } from './actionSystem';
 import { dist } from './math';
 
 export interface CreateMatchOptions {
@@ -152,9 +153,23 @@ function applyController(state: MatchState, c: HumanController, input: InputFram
     if (input.shootHeld) c.chargeTime = Math.min(SHOOT_CHARGE_TIME, c.chargeTime + dt);
     if (shootReleased) {
       const charge = c.chargeTime / SHOOT_CHARGE_TIME;
-      const goalX = cur.team === 0 ? 1e6 : -1e6;
-      const targetY = FIELD_CY + input.moveY * m(2);
-      shoot(cur, goalX, targetY, charge, state, 'normal');
+      // Real goal-line target: aim at the attacking goal's line, with the
+      // direction stick choosing the target Y on the goal mouth.
+      const goalLineX = cur.team === 0 ? FIELD_RIGHT : FIELD_X;
+      const goalTopY = FIELD_CY - m(1.5); // GOAL_H/2 in metres (~3m goal)
+      const goalBotY = FIELD_CY + m(1.5);
+      // Without aim input, use the player's facing to pick a side.
+      let targetY: number;
+      if (Math.abs(input.moveY) > 0.1) {
+        targetY = FIELD_CY + input.moveY * m(1.4);
+      } else {
+        // Aim toward the far post (opposite to facing y) for variety.
+        targetY = FIELD_CY + (Math.sin(cur.facing) > 0 ? -m(0.8) : m(0.8));
+      }
+      targetY = Math.max(goalTopY, Math.min(goalBotY, targetY));
+      // Shot type: short press = placed, long press = power, highPass(hold) = lob.
+      const shotType = highPressed ? 'lob' : charge < 0.4 ? 'placed' : 'power';
+      shoot(cur, goalLineX, targetY, charge, state, shotType);
       c.chargeTime = 0;
     }
   } else {
@@ -354,8 +369,20 @@ export function stepMulti(state: MatchState, inputs: InputFrame[], dt: number): 
         // GK movement already applied in updateGoalkeeper; still integrate position.
       }
     }
-    // 5. Integrate players.
-    for (const p of state.players) integratePlayer(p, dt);
+    // 5. Integrate players + advance phased actions (kick at contact tick).
+    for (const p of state.players) {
+      integratePlayer(p, dt);
+      const ar = stepAction(p, state);
+      if (ar.contact) {
+        // Execute the kick at the contact tick.
+        const a = ar.contact;
+        if (a.type === 'shortPass' || a.type === 'drivenPass' || a.type === 'throughPass' || a.type === 'lobPass') {
+          executePassKick(p, state, a);
+        } else if (a.type === 'placedShot' || a.type === 'powerShot' || a.type === 'lobShot' || a.type === 'firstTimeShot') {
+          executeShotKick(p, state, a);
+        }
+      }
+    }
     // 6. Soft collisions + foul detection.
     for (let i = 0; i < state.players.length; i++) {
       for (let j = i + 1; j < state.players.length; j++) {
