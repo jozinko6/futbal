@@ -599,7 +599,8 @@ export function pass(
   const power = mps(BALL.passSpeed[type] ?? BALL.passSpeed.short);
   startAction(passer, state, actionType, targetX, targetY, power);
   passer.aimDir = angleTo(passer.x, passer.y, targetX, targetY);
-  releaseBall(state, 'PASS');
+  // Ball stays CONTROLLED during windup — released at contact tick.
+  // (Do NOT call releaseBall here.)
 }
 
 /** Apply the kick of a pass action at the contact tick. */
@@ -610,6 +611,8 @@ export function executePassKick(passer: PlayerEntity, state: MatchState, a: Play
   const dy = a.aimY - passer.y;
   const vz = type === 'lob' ? mps(BALL.lobZ) : 0;
   kickBall(state.ball, dx, dy, a.power, vz);
+  // Release ownership at the contact tick.
+  releaseBall(state, type === 'lob' ? 'AERIAL' : 'PASS');
 }
 
 // --- Shooting (windup / contact / recovery) -------------------------------
@@ -633,7 +636,7 @@ export function shoot(
   // stored here is the player's intended target.
   const power = Math.min(BALL.shootMax, BALL.shootMin + charge * (BALL.shootMax - BALL.shootMin));
   startAction(shooter, state, actionType, targetX, targetY, power);
-  releaseBall(state, 'SHOT');
+  // Ball stays CONTROLLED during windup — released at contact tick.
   shooter.aimDir = angleTo(shooter.x, shooter.y, targetX, targetY);
 }
 
@@ -669,6 +672,8 @@ export function executeShotKick(shooter: PlayerEntity, state: MatchState, a: Pla
   let vz = 0;
   if (shotType === 'lob') vz = mps(BALL.lobZ);
   else vz = mps(1) + chargeRatio * mps(1.2);
-  kickBall(state.ball, Math.cos(finalAng), Math.sin(finalAng), a.power, vz);
+  kickBall(state.ball, Math.cos(finalAng), Math.sin(finalAng), mps(a.power), vz);
   shooter.aimDir = finalAng;
+  // Release ownership at the contact tick.
+  releaseBall(state, shotType === 'lob' ? 'AERIAL' : 'SHOT');
 }

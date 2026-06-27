@@ -90,7 +90,7 @@ export const BALL = {
 
 // --- Tackles & defense ----------------------------------------------------
 export const DEFENSE = {
-  controlRadius: 0.9,
+  controlRadius: 1.1,
   tackleRadius: 1.1,
   containDistance: 1.6,
   slideSpeed: 9,

@@ -176,7 +176,7 @@ describe('gameplay — action contact tick', () => {
 
 describe('gameplay — shooting aim', () => {
   it('a shot can be aimed at the top of the goal (Y < centre)', () => {
-    const s = createMatchState({ seed: 108, halfLength: 60 });
+    const s = createMatchState({ seed: 108, halfLength: 60, humanPlayers: 0 });
     s.period = 'play';
     const p = s.players[3]; // home team 0 → attacks right
     p.x = FIELD_RIGHT - m(8); p.y = FIELD_CY;
@@ -192,7 +192,7 @@ describe('gameplay — shooting aim', () => {
   });
 
   it('a shot can be aimed at the bottom of the goal (Y > centre)', () => {
-    const s = createMatchState({ seed: 109, halfLength: 60 });
+    const s = createMatchState({ seed: 109, halfLength: 60, humanPlayers: 0 });
     s.period = 'play';
     const p = s.players[3];
     p.x = FIELD_RIGHT - m(8); p.y = FIELD_CY;
