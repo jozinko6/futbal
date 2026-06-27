@@ -1,0 +1,33 @@
+{
+  "generated": "2026-06-27T12:13:48.042Z",
+  "spec": {
+    "frameW": 32,
+    "frameH": 40,
+    "directions": 8,
+    "frames": 4,
+    "animations": [
+      "idle",
+      "walk",
+      "run",
+      "sprint",
+      "dribble",
+      "pass",
+      "shoot",
+      "lobPass",
+      "tackle",
+      "hit",
+      "header",
+      "celebrate",
+      "gkIdle",
+      "gkRun",
+      "gkCatch",
+      "gkDive"
+    ]
+  },
+  "files": [
+    "assets/generated/player_home.png",
+    "assets/generated/player_away.png",
+    "assets/generated/field.png"
+  ],
+  "license": "Original work (CC0-equivalent). All pixels generated procedurally; no third-party assets copied."
+}

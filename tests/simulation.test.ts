@@ -28,6 +28,7 @@ import {
   tryTackle,
   type InputFrame,
   type MatchState,
+  type Team,
 } from '@/game/simulation';
 
 function press(input: Partial<InputFrame>): InputFrame {
@@ -569,14 +570,14 @@ describe('penalty shootout', () => {
     let started = false;
     for (let i = 0; i < 2000; i++) {
       step(s, emptyInput(0), FIXED_DT);
-      if (s.period === 'penalties') { started = true; break; }
+      if ((s.period as string) === 'penalties') { started = true; break; }
     }
     expect(started).toBe(true);
     // Run the shootout to completion.
     let finished = false;
     for (let i = 0; i < 4000; i++) {
       step(s, emptyInput(0), FIXED_DT);
-      if (s.period === 'fulltime') { finished = true; break; }
+      if ((s.period as string) === 'fulltime') { finished = true; break; }
     }
     expect(finished).toBe(true);
     // A winner was decided (scores differ).

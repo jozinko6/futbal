@@ -11,8 +11,7 @@ import {
   type Team,
 } from '@/game/simulation';
 import { createCamera, updateCamera } from '@/game/render/camera';
-import { createFieldTexture } from '@/game/render/field';
-import { render, type RenderAssets } from '@/game/render/renderer';
+import { createRenderAssets, render, type RenderAssets } from '@/game/render/renderer';
 import { InputManager, P2_KEYS, P1_KEYS, type TouchState } from '@/game/input/InputManager';
 import { getSound } from '@/game/audio/Sound';
 import { TouchControls } from './TouchControls';
@@ -191,7 +190,7 @@ export function GameContainer() {
 
     // Build assets / state / inputs.
     if (!assetsRef.current) {
-      assetsRef.current = { field: createFieldTexture() };
+      assetsRef.current = createRenderAssets();
     }
     const state = createMatchState({
       difficulty: config.difficulty,

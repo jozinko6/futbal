@@ -274,3 +274,49 @@ Stage Summary:
 - Fauly zo sklzov → priamy voľný kop alebo penaľta v pokutovom území.
 - Penalty shootout po remíze: best-of-5 + sudden death, deterministický.
 - 31/31 testov passing, tsc/lint čistý.
+
+---
+Task ID: 12
+Agent: main
+Task: Asset pipeline — vendor referencie, originálny sprite-sheet (32×40, 8 smerov, 16 animácií), dokumentácia
+
+Work Log:
+- Vytvoril priečinkovú štruktúru: assets/{vendor,source,generated,game}/ s podpriečinkami
+  pre 6 balíkov (letta-corporation, opengameart, kenney-sports, soccer-ball-anim,
+  basic-soccer, indoor-5x5).
+- Stiahol CC0 referenčné obrázky lokálne do assets/vendor/opengameart/ (6 súborov:
+  3 player sprite referencie + 3 pitch referencie) cez z-ai image-search → curl.
+  Žiadne hotlinky — súbory fyzicky na disku.
+- Postavil originálny sprite-sheet generátor (src/game/render/spriteSheet.ts):
+  * 32×40 px rámce, 8 smerov (E..NE), 16 animácií × 4 snímky = 512 rámcov na tím
+  * priehľadné PNG pozadie, foot pivot (16,39), konzistentný tieň
+  * 16-bitová paleta, originálne dresy (červený "ČERVENÍ" / modrý "MODRÍ") — žiadne
+    reálne klubové logá/identity
+  * stateToAnim() mapuje PlayerStateName → sheet animácia
+  * angleToDirection() mapuje facing → 8 smerov
+- 16 animácií: idle, walk, run, sprint, dribble, pass, shoot, lobPass, tackle, hit,
+  header, celebrate, gkIdle, gkRun, gkCatch, gkDive (všetky implementované).
+- Integroval sprite-sheet do rendereru: drawPlayer teraz blit-uje z sheetu namiesto
+  procedurálneho kreslenia. RenderAssets = { field, sheets[2] }. createRenderAssets()
+  vybuduje všetko naraz. GameContainer + OnlineMatch používajú createRenderAssets().
+- Offline export skript (scripts/generate-assets.ts, bun canvas): vyrenderuje
+  player_home.png, player_away.png, field.png + manifest.json do assets/generated/
+  a assets/game/ (trvalé PNG artefakty, CC0-equivalent original work).
+- Pridal `bun run gen:assets` skript.
+- docs/ASSET_SOURCES.md: kompletná dokumentácia — licenčné zásady, priečinkové
+  rozloženie, záznamy pre každý shipped asset (názov, autor, zdroj, dátum, licencia,
+  spôsob použitia, úpravy, atribúcia), 6 vendor balíkov (s statusom reserved/downloaded),
+  audio politika (žiadny Muchachos, žiadne externé audio), zakázané zdroje, návod na
+  regeneráciu.
+- .gitignore: vendor referenčné súbory sa nedistribuujú.
+- Verifikácia: VLM potvrdil sprite-sheet (32×40, priehľadné, animácie, červeno-biele
+  dresy). V browseri hráči renderujú ako proper sprite postavy s hlavou/dresom/
+  nohavicami/nohami, červeno-modré tímy, čistý pixel-art bez glitchov.
+
+Stage Summary:
+- Asset pipeline kompletný: vendor referencie lokálne, originálny sprite-sheet
+  (unified 32×40/8-smer/16-anim špecifikácia), PNG export, dokumentácia.
+- Žiadne reálne klubové logá/identity, žiadny Muchachos, žiadne komerčné NES/SNES/
+  Sega assety — iba originálna generovaná grafika + CC0 referencie (nezasielané).
+- 31/31 testov passing, tsc/lint čistý.
+- `bun run gen:assets` regeneruje všetky shipped assety.

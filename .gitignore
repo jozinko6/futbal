@@ -52,3 +52,10 @@ prompt
 server.log
 # Skills directory
 /skills/
+# Vendor reference assets — downloaded for visual reference only, NOT shipped
+# or redistributed. Generated/shipped art lives in assets/generated/ and
+# assets/game/ and is original.
+assets/vendor/*/ref_*
+assets/vendor/**/*.jpg
+assets/vendor/**/*.png
+!assets/vendor/.gitkeep

@@ -16,10 +16,28 @@ import {
   type PlayerEntity,
 } from '@/game/simulation';
 import { cameraOrigin, type Camera } from './camera';
-import { WORLD_H, WORLD_W } from './field';
+import { createFieldTexture, WORLD_H, WORLD_W } from './field';
+import {
+  ANIMATIONS,
+  FRAME_H,
+  FRAME_W,
+  angleToDirection,
+  createPlayerSheet,
+  stateToAnim,
+  type SpriteSheet,
+} from './spriteSheet';
 
 export interface RenderAssets {
   field: HTMLCanvasElement;
+  sheets: [SpriteSheet, SpriteSheet]; // [home, away]
+}
+
+/** Build all render assets once (browser-only). */
+export function createRenderAssets(): RenderAssets {
+  return {
+    field: createFieldTexture(),
+    sheets: [createPlayerSheet(0), createPlayerSheet(1)],
+  };
 }
 
 export function render(
@@ -46,10 +64,7 @@ export function render(
     VIEW_H,
   );
 
-  // --- Shadows first (so players/ball sit on top) ---
-  for (const p of state.players) {
-    drawShadow(ctx, p.x - origin.x, p.y - origin.y, PLAYER_RADIUS * 1.7, 0.28);
-  }
+  // --- Ball shadow (player shadows are baked into the sprite sheet) ---
   const ball = state.ball;
   drawShadow(ctx, ball.x - origin.x, ball.y - origin.y, 7 - ball.z * 0.01, 0.22);
 
@@ -61,7 +76,7 @@ export function render(
     return aActive - bActive;
   });
   for (const p of order) {
-    drawPlayer(ctx, p.x - origin.x, p.y - origin.y, p, activeIds.has(p.id), state);
+    drawPlayer(ctx, p.x - origin.x, p.y - origin.y, p, activeIds.has(p.id), state, assets);
   }
 
   // --- Ball ---
@@ -96,14 +111,12 @@ function drawPlayer(
   p: PlayerEntity,
   isActive: boolean,
   state: MatchState,
+  assets: RenderAssets,
 ): void {
   const colors = p.team === 0 ? TEAM_COLORS.home : TEAM_COLORS.away;
   const moving = Math.hypot(p.vx, p.vy) > 8;
-  const phase = p.animTime * (moving ? 12 : 3);
-  const bob = moving ? Math.sin(phase) * 1 : 0;
-  const legSwing = moving ? Math.sin(phase) * 3 : 0;
 
-  // Active-player ring on the ground.
+  // Active-player ring on the ground (drawn under the sprite).
   if (isActive) {
     ctx.strokeStyle = colors.trim;
     ctx.lineWidth = 2;
@@ -122,72 +135,38 @@ function drawPlayer(
     ctx.fill();
   }
 
-  const bx = Math.round(x);
-  const by = Math.round(y + bob);
+  // --- Sprite-sheet blit (32×40, foot pivot at bottom-centre) ---
+  const sheet = assets.sheets[p.team];
+  const anim = stateToAnim(p.state, p.role, moving);
+  const animRow = ANIMATIONS.indexOf(anim);
+  const dir = angleToDirection(p.facing);
+  const speed = moving ? (p.state === 'sprint' ? 14 : 10) : 3;
+  const frame = Math.floor(p.animTime * speed) % sheet.frames;
+  const sx = dir * FRAME_W;
+  const sy = (animRow * sheet.frames + frame) * FRAME_H;
+  // Centre the 32×40 frame on the player position with the foot pivot at the
+  // player's (x, y). Foot pivot is at (16, 39) within the frame.
+  const dx = Math.round(x - FRAME_W / 2);
+  const dy = Math.round(y - FRAME_H + 1);
+  ctx.drawImage(sheet.canvas, sx, sy, FRAME_W, FRAME_H, dx, dy, FRAME_W, FRAME_H);
 
-  // Legs.
-  ctx.fillStyle = '#20242b';
-  ctx.fillRect(bx - 4, by + 2, 3, 5 + legSwing);
-  ctx.fillRect(bx + 1, by + 2, 3, 5 - legSwing);
-
-  // Shorts.
-  ctx.fillStyle = colors.shorts;
-  ctx.fillRect(bx - 5, by, 10, 4);
-
-  // Jersey body.
-  ctx.fillStyle = colors.jersey;
-  roundRect(ctx, bx - 6, by - 6, 12, 8, 3);
-  ctx.fill();
-  // Trim stripe.
-  ctx.fillStyle = colors.trim;
-  ctx.fillRect(bx - 6, by - 1, 12, 1);
-
-  // Arms (rotate slightly with run).
-  ctx.fillStyle = colors.jersey;
-  ctx.fillRect(bx - 8, by - 4, 2, 5);
-  ctx.fillRect(bx + 6, by - 4, 2, 5);
-
-  // Head.
-  ctx.fillStyle = colors.skin;
-  ctx.beginPath();
-  ctx.arc(bx, by - 9, 4, 0, Math.PI * 2);
-  ctx.fill();
-  // Hair / cap hint.
-  ctx.fillStyle = colors.shorts;
-  ctx.fillRect(bx - 4, by - 12, 8, 2);
-
-  // Direction nose (facing).
-  const nx = Math.cos(p.facing);
-  const ny = Math.sin(p.facing);
-  ctx.fillStyle = colors.skin;
-  ctx.fillRect(Math.round(bx + nx * 4 - 1), Math.round(by - 9 + ny * 4 - 1), 2, 2);
-
-  // Goalkeeper accent: gloves tint.
-  if (p.role === 'GK') {
-    ctx.fillStyle = '#ffd23f';
-    ctx.fillRect(bx - 9, by - 1, 2, 3);
-    ctx.fillRect(bx + 7, by - 1, 2, 3);
-  }
-
-  // State-specific overlay.
+  // State-specific overlay (stun stars / celebrate sparkles).
   if (p.state === 'stunned') {
-    drawStars(ctx, bx, by - 14);
-  } else if (p.state === 'celebrate') {
-    ctx.fillStyle = '#ffd23f';
-    ctx.fillRect(bx - 1, by - 18, 2, 4);
-    ctx.fillRect(bx - 3, by - 16, 6, 2);
+    drawStars(ctx, Math.round(x), Math.round(y - 22));
   }
 
   // Charge bar for an active player building a shot.
   if (isActive && p.hasBall) {
     const ctrl = state.controllers.find((c) => c.activeId === p.id);
     if (ctrl && ctrl.chargeTime > 0) {
+      const bx = Math.round(x);
+      const by = Math.round(y);
       const w = 16;
       const ratio = Math.min(1, ctrl.chargeTime / SHOOT_CHARGE_TIME);
       ctx.fillStyle = 'rgba(0,0,0,0.5)';
-      ctx.fillRect(bx - w / 2, by - 22, w, 3);
+      ctx.fillRect(bx - w / 2, by - 26, w, 3);
       ctx.fillStyle = ratio > 0.66 ? '#ff5a3c' : ratio > 0.33 ? '#ffd23f' : '#7bd389';
-      ctx.fillRect(bx - w / 2, by - 22, Math.round(w * ratio), 3);
+      ctx.fillRect(bx - w / 2, by - 26, Math.round(w * ratio), 3);
     }
   }
 }

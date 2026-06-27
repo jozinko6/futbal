@@ -4,8 +4,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { FIXED_DT, MAX_FRAME_ACCUM, type MatchState } from '@/game/simulation';
 import { createCamera, updateCamera } from '@/game/render/camera';
-import { createFieldTexture } from '@/game/render/field';
-import { render, type RenderAssets } from '@/game/render/renderer';
+import { createRenderAssets, render, type RenderAssets } from '@/game/render/renderer';
 import { InputManager, P1_KEYS, type TouchState } from '@/game/input/InputManager';
 import { getSound } from '@/game/audio/Sound';
 import { NetClient } from '@/game/net/client';
@@ -65,7 +64,7 @@ export function OnlineMatch({ net, settings, onSettingsChange, onQuit, onMatchEn
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
 
-    if (!assetsRef.current) assetsRef.current = { field: createFieldTexture() };
+    if (!assetsRef.current) assetsRef.current = createRenderAssets();
     camRef.current = createCamera();
     lastRef.current = performance.now();
     accRef.current = 0;
