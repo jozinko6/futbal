@@ -234,17 +234,20 @@ export function resolvePossession(state: MatchState): void {
 
   // If already controlled, keep the current owner — do NOT reassign.
   if (ball.mode === 'CONTROLLED' || ball.mode === 'GK_HELD') {
-    // Verify the owner is still valid (not stunned).
-    if (ball.ownerId != null) {
+    // If ownerId is null but mode is CONTROLLED, fix the invariant → treat as FREE.
+    if (ball.ownerId == null) {
+      setBallOwner(state, null, 'FREE');
+      // Fall through to the FREE ball logic below.
+    } else {
+      // Verify the owner is still valid (not stunned).
       const owner = state.players[ball.ownerId];
       if (owner && owner.stunnedTime > 0) {
-        // Owner stunned — release the ball.
         releaseBall(state, 'FREE');
         ball.x = owner.x; ball.y = owner.y;
         ball.vx = owner.vx * 0.5; ball.vy = owner.vy * 0.5;
       }
+      return;
     }
-    return;
   }
 
   // Ball is FREE/PASS/SHOT/AERIAL — find the nearest eligible player.

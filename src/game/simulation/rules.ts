@@ -11,6 +11,7 @@ import {
 import type { MatchState, PlayerEntity, RestartType, Team } from './types';
 import { resetToFormation } from './formation';
 import { emit } from '@/game/presentation/events';
+import { setBallOwner } from './ownership';
 
 export type FieldEvent =
   | { type: 'goal'; team: Team }
@@ -153,10 +154,8 @@ export function setupKickoff(state: MatchState, team: Team): void {
   if (mid) {
     mid.x = FIELD_CX - (team === 0 ? m(0.5) : -m(0.5));
     mid.y = FIELD_CY;
-    state.ball.ownerId = mid.id;
     state.ball.x = FIELD_CX; state.ball.y = FIELD_CY;
-    state.ball.ballState = 'CONTROLLED';
-    for (const p of state.players) p.hasBall = p.id === mid.id;
+    setBallOwner(state, mid.id, 'CONTROLLED');
   }
   state.restartTimer = 0.6;
 }

@@ -29,7 +29,7 @@ import { updateGoalkeeper } from './goalkeeper';
 import { stepAction } from './actionSystem';
 import { evaluateTackleFoul, recordBallContact, resetContactTrack } from './fouls';
 import { emit } from '@/game/presentation/events';
-import { syncHasBall as syncHasBallState } from './ownership';
+import { syncHasBall as syncHasBallState, setBallOwner } from './ownership';
 import { dist } from './math';
 
 export interface CreateMatchOptions {
@@ -291,7 +291,7 @@ function processFieldEvents(state: MatchState): void {
   } else if (ev.type === 'goalKick') {
     setupRestart(state, 'goalKick', team);
     const gk = state.players.find((p) => p.team === team && p.role === 'goalkeeper');
-    if (gk) { state.ball.ownerId = gk.id; state.ball.x = gk.x; state.ball.y = gk.y; state.ball.ballState = 'GOALKEEPER_CONTROLLED'; }
+    if (gk) { setBallOwner(state, gk.id, 'GK_HELD'); state.ball.x = gk.x; state.ball.y = gk.y; }
     state.banner = 'KOP OD BRÁNY'; state.bannerTimer = 1.0;
   }
 }
@@ -494,52 +494,5 @@ export { resetToFormation, setupKickoff, awardGoal };
 export { dist };
 export { PENALTY_SPOT_X, PLAYERS_PER_TEAM };
 
-// --- Ball ownership: single source of truth ---
-
-/** Check if a player owns the ball. Uses ball.ownerId — NEVER player.hasBall. */
-export function playerHasBall(state: MatchState, playerId: number): boolean {
-  return state.ball.ownerId === playerId;
-}
-
-/** The ONLY function that syncs player.hasBall from ball.ownerId.
- *  Call after any ownership change. Gameplay code reads ball.ownerId, not hasBall. */
-export function syncHasBall(state: MatchState): void {
-  for (const p of state.players) {
-    p.hasBall = p.id === state.ball.ownerId;
-  }
-}
-
-/** Set the ball owner and mode. Centralised — no direct ball.ownerId writes elsewhere. */
-export function setBallOwner(state: MatchState, playerId: number | null, mode: import('./types').BallMode): void {
-  const ball = state.ball;
-  if (playerId == null) {
-    ball.previousOwnerId = ball.ownerId;
-    ball.ownerId = null;
-  } else {
-    if (ball.ownerId !== playerId) {
-      ball.previousOwnerId = ball.ownerId;
-      ball.ownerId = playerId;
-      ball.controlStartedTick = state.tick;
-      ball.lastTouchPlayerId = playerId;
-      ball.lastTouchTeam = teamOf(playerId);
-    }
-  }
-  ball.mode = mode;
-  // Sync legacy ballState.
-  switch (mode) {
-    case 'CONTROLLED': ball.ballState = 'CONTROLLED'; break;
-    case 'GK_HELD': ball.ballState = 'GOALKEEPER_CONTROLLED'; break;
-    case 'FREE': ball.ballState = 'LOOSE'; break;
-    case 'PASS': case 'SHOT': ball.ballState = 'LOOSE'; break;
-    case 'AERIAL': ball.ballState = 'AIRBORNE'; break;
-    case 'OUT_OF_PLAY': case 'RESTART': ball.ballState = 'OUT_OF_PLAY'; break;
-  }
-  syncHasBall(state);
-}
-
-/** Release the ball (pass/shot/tackle). */
-export function releaseBall(state: MatchState, mode: import('./types').BallMode): void {
-  setBallOwner(state, null, mode);
-  state.ball.releaseTick = state.tick;
-  state.ball.releaseCooldown = 0.18;
-}
+// Re-export ownership helpers from ownership.ts for backward compat.
+export { playerHasBall, syncHasBall, setBallOwner, releaseBall } from './ownership';

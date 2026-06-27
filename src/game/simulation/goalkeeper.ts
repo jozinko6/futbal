@@ -16,6 +16,7 @@ import { dist, angleTo } from './math';
 import { gkDive, pass } from './player';
 import { kickBall } from './ball';
 import { rngFloat } from './rng';
+import { releaseBall } from './ownership';
 
 export function ownGoalX(team: Team): number { return team === 0 ? FIELD_X : FIELD_RIGHT; }
 
@@ -78,9 +79,8 @@ export function updateGoalkeeper(state: MatchState, gk: PlayerEntity, dt: number
         state.rngState = nr;
         const parryAng = angleTo(gk.x, gk.y, ownX + dirSign * m(8), FIELD_CY + (roll - 0.5) * m(6));
         kickBall(ball, Math.cos(parryAng), Math.sin(parryAng), mps(BALL.passSpeed.driven) * 0.8, mps(2));
-        ball.ownerId = null;
+        releaseBall(state, 'FREE');
         ball.releaseCooldown = 0.2;
-        ball.ballState = 'LOOSE';
         gk.state = 'stunned'; gk.stunnedTime = 0.4; // brief recovery
         return;
       }
