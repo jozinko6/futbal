@@ -1,0 +1,1780 @@
+# ARCADE FOOTBALL REBUILD
+
+## Clean-room analýza YSoccer + prestavba projektu `jozinko6/futbal`
+
+Pracuješ na existujúcom repozitári:
+
+`jozinko6/futbal`
+
+Ako technickú referenciu analyzuj dekompilovaný projekt:
+
+`boltvious/ysoccer`
+
+Referenčný projekt je dekompilovaný Java/libGDX program pôvodne získaný z `ysoccer.jar`.
+
+Tvojou úlohou nie je mechanicky preniesť Java kód.
+
+Tvojou úlohou je:
+
+1. pochopiť správanie jednotlivých systémov YSoccer,
+2. vytvoriť ich vlastnú čistú TypeScript implementáciu,
+3. opraviť súčasnú nehrateľnú simuláciu projektu `futbal`,
+4. vytvoriť rýchly a responzívny arkádový futbal,
+5. použiť YSoccer a Sensible Soccer ako gameplayovú referenciu,
+6. použiť Taito Cup Finals ako hlavnú vizuálnu a prezentačnú referenciu,
+7. zachovať originálny názov, grafiku, tímy, hudbu a assety.
+
+Výsledok musí byť originálny duchovný nástupca klasických arkádových futbalových hier.
+
+---
+
+# 1. LICENČNÝ A CLEAN-ROOM REŽIM
+
+Použi:
+
+```text
+YSOCCER_USAGE_MODE = CLEAN_ROOM_BEHAVIORAL_REFERENCE
+```
+
+Je zakázané:
+
+* prekladať Java metódy riadok po riadku,
+* kopírovať celé triedy,
+* kopírovať dekompilované názvy a štruktúru bez potreby,
+* kopírovať pôvodné magic numbers bez vlastného merania,
+* kopírovať grafické assety,
+* kopírovať hudbu,
+* kopírovať zvuky,
+* kopírovať databázy tímov,
+* kopírovať pôvodné taktické súbory,
+* kopírovať texty a preklady,
+* kopírovať pôvodné logá alebo názvy.
+
+Je povolené:
+
+* skúmať správanie systému,
+* opísať algoritmický princíp,
+* vytvoriť novú TypeScript implementáciu,
+* použiť všeobecné futbalové pravidlá,
+* použiť všeobecné matematické a fyzikálne princípy,
+* vytvoriť vlastné konštanty na základe playtestu.
+
+Vytvor:
+
+```text
+docs/YSOCCER_DECOMPILE_AUDIT.md
+docs/YSOCCER_BEHAVIOR_MAP.md
+docs/CLEAN_ROOM_IMPLEMENTATION.md
+docs/THIRD_PARTY_NOTICES.md
+```
+
+Pri každom analyzovanom systéme zapíš:
+
+* názov referenčného Java súboru,
+* pozorované správanie,
+* všeobecný algoritmický princíp,
+* čo je vhodné pre našu hru,
+* čo nebude použité,
+* názov novej TypeScript implementácie,
+* potvrdenie, že nejde o mechanický preklad.
+
+Nepoužívaj dekompilovaný YSoccer kód priamo v produkčnom bundle.
+
+---
+
+# 2. HLAVNÝ CIEĽ
+
+Aktuálna hra obsahuje veľa funkcií, ale jej základný herný cyklus nie je konzistentný.
+
+Najskôr oprav:
+
+```text
+pohyb
+→ kontrola lopty
+→ prihrávka
+→ spracovanie
+→ prepnutie hráča
+→ strela
+→ zákrok brankára
+→ pokračovanie hry
+```
+
+Až keď tento cyklus pôsobí správne bez vizuálnych efektov, pokračuj ďalšími funkciami.
+
+Najvyššia priorita:
+
+* okamžitá odozva,
+* predvídateľná lopta,
+* spoľahlivý dribling,
+* jednoduché ovládanie,
+* stabilné prepínanie,
+* inteligentný pohyb spoluhráčov,
+* zábavné strely,
+* fyzické zákroky brankára.
+
+Neoptimalizuj zatiaľ multiplayer, replay ani vizuálne efekty pred dokončením základnej hrateľnosti.
+
+---
+
+# 3. BASELINE A AUDIT
+
+Najskôr spusti:
+
+```bash
+bun install
+bunx tsc --noEmit
+bun run lint
+bun test
+bun run build
+```
+
+Manuálne spusti hru a zaznamenaj:
+
+* input latency,
+* stratené tlačidlové udalosti,
+* správanie driblingu,
+* vzdialenosť lopty od hráča,
+* zmeny vlastníka lopty,
+* prepínanie hráča,
+* správanie prihrávok,
+* správanie striel,
+* správanie AI,
+* zákroky brankára,
+* stabilitu kamery.
+
+Vytvor:
+
+```text
+docs/GAMEPLAY_RESCUE_BASELINE.md
+docs/GAMEPLAY_RESCUE_PLAN.md
+```
+
+Nevychádzaj z tvrdení existujúcich reportov. Over skutočný kód a spustenú hru.
+
+---
+
+# 4. DOČASNÉ VYPNUTIE EFEKTOV
+
+Počas prestavby vypni:
+
+* CRT,
+* bloom,
+* camera shake,
+* particles,
+* ball trail,
+* replay,
+* VHS filter,
+* náhodné vizuálne flashes.
+
+Pridaj development preset:
+
+```ts
+const GAMEPLAY_TUNING_PRESET = {
+  crt: false,
+  glow: false,
+  particles: false,
+  shake: false,
+  trail: false,
+  replay: false,
+};
+```
+
+Gameplay musí byť zábavný aj s týmto presetom.
+
+---
+
+# 5. FIXED-STEP INPUT QUEUE
+
+Súčasné tlačidlové edge udalosti sa nesmú spotrebovať v render frame, počas ktorého neprebehne simulačný tick.
+
+Rozdeľ vstup na:
+
+```ts
+interface ContinuousInput {
+  moveX: number;
+  moveY: number;
+  aimX: number;
+  aimY: number;
+  sprintHeld: boolean;
+  actionHeld: boolean;
+  modifierHeld: boolean;
+}
+
+interface InputEdges {
+  actionPressed: boolean;
+  actionReleased: boolean;
+  tacklePressed: boolean;
+  switchPressed: boolean;
+  specialPressed: boolean;
+  pausePressed: boolean;
+}
+```
+
+InputManager musí uchovávať edge udalosti vo fronte až do najbližšieho simulačného ticku.
+
+Použi:
+
+```ts
+while (accumulator >= FIXED_DT) {
+  const input = inputManager.consumeForSimulationTick();
+  step(state, input, FIXED_DT);
+  accumulator -= FIXED_DT;
+}
+```
+
+Pravidlá:
+
+* continuous input dostane každý tick,
+* edge input dostane iba prvý príslušný tick,
+* krátke stlačenie sa nesmie stratiť,
+* catch-up ticks nesmú akciu zopakovať,
+* keyboard, gamepad aj touch používajú rovnakú abstrakciu.
+
+Pridaj testy pri renderovacích frekvenciách:
+
+* 30 FPS,
+* 60 FPS,
+* 120 FPS,
+* 144 FPS,
+* 240 FPS.
+
+Výsledok simulácie musí byť konzistentný.
+
+---
+
+# 6. JEDINÝ ZDROJ VLASTNÍCTVA LOPTY
+
+Odstráň konflikt medzi:
+
+```ts
+ball.ownerId
+player.hasBall
+```
+
+Jediným autoritatívnym zdrojom je:
+
+```ts
+ball.ownerId
+```
+
+Použi helper:
+
+```ts
+function playerHasBall(state: MatchState, playerId: number): boolean {
+  return state.ball.ownerId === playerId;
+}
+```
+
+`player.hasBall`:
+
+* úplne odstráň,
+* alebo ho ponechaj iba ako odvodené read-only pole pre kompatibilitu,
+* nikdy ho samostatne nezapisuj,
+* gameplay logika ho nesmie čítať.
+
+Vytvor explicitné režimy lopty:
+
+```ts
+type BallMode =
+  | 'CONTROLLED'
+  | 'FREE'
+  | 'PASS'
+  | 'SHOT'
+  | 'AERIAL'
+  | 'GK_HELD'
+  | 'RESTART'
+  | 'OUT_OF_PLAY';
+```
+
+Rozšír stav:
+
+```ts
+interface BallState {
+  mode: BallMode;
+  ownerId: number | null;
+  previousOwnerId: number | null;
+  lastTouchPlayerId: number | null;
+  lastTouchTeam: Team | null;
+  ownerSinceTick: number;
+  releasedAtTick: number;
+}
+```
+
+Invarianty:
+
+* `CONTROLLED` musí mať ownerId,
+* `GK_HELD` musí mať ownerId brankára,
+* `FREE`, `PASS`, `SHOT` a `AERIAL` nesmú mať ownerId,
+* akcia sa môže začať iba skutočnému majiteľovi,
+* vlastníctvo sa uvoľní presne v kontaktnom ticku,
+* počas wind-up vlastníctvo zostáva hráčovi,
+* proximity systém nesmie odobrať kontrolovanú loptu.
+
+V development režime pridaj:
+
+```ts
+assertBallInvariants(state);
+```
+
+Pri chybe vypíš:
+
+* tick,
+* mode,
+* ownerId,
+* previousOwnerId,
+* activePlayerId,
+* player action,
+* action phase,
+* pozíciu a rýchlosť lopty.
+
+---
+
+# 7. ARKÁDOVÁ KONTROLA LOPTY
+
+Pre kontrolovaný dribling nepoužívaj plnú voľnú fyziku lopty každý tick.
+
+V režime `CONTROLLED`:
+
+* lopta patrí hráčovi,
+* pohybuje sa pri jeho nohách,
+* vizuálne strieda ľavú a pravú nohu,
+* pri behu je mierne pred hráčom,
+* pri šprinte je o trochu ďalej,
+* pri otočení sa presunie cez správnu stranu tela,
+* neodpojí sa náhodne kvôli malému control radius.
+
+Použi:
+
+```ts
+interface DribbleSocket {
+  forward: number;
+  lateral: number;
+  foot: 'left' | 'right';
+  phase: number;
+}
+```
+
+Pozíciu kontrolovanej lopty určuj podľa:
+
+* facing,
+* movement direction,
+* rýchlosti,
+* animačnej fázy,
+* control skill,
+* typu pohybu.
+
+Lopta sa uvoľní iba pri:
+
+* prihrávke,
+* strele,
+* úspešnom tackle,
+* shoulder challenge,
+* prudkom bloku,
+* zlom spracovaní,
+* kolízii,
+* strate rovnováhy,
+* aute alebo prerušení.
+
+Bežný šprint nesmie sám od seba spôsobovať stratu lopty.
+
+---
+
+# 8. SPRACOVANIE LOPTY PODĽA RELATÍVNEJ RÝCHLOSTI
+
+Inšpiruj sa princípom YSoccer, ktorý hodnotí:
+
+* priestor pred hráčom,
+* výšku lopty,
+* rozdiel rýchlosti hráča a lopty,
+* smer hráča,
+* control skill.
+
+Vytvor vlastný modul:
+
+```text
+src/game/simulation/ballReception.ts
+```
+
+Výsledky:
+
+```ts
+type ReceptionResult =
+  | { type: 'CLEAN_CONTROL' }
+  | { type: 'DIRECTED_TOUCH'; velocity: Vec3 }
+  | { type: 'HEAVY_TOUCH'; velocity: Vec3 }
+  | { type: 'DEFLECTION'; velocity: Vec3 }
+  | { type: 'HEADER_AVAILABLE' }
+  | { type: 'VOLLEY_AVAILABLE' };
+```
+
+Pravidlá:
+
+* obyčajná krátka prihrávka sa spracuje spoľahlivo,
+* prudká lopta pod tlakom môže odskočiť,
+* vysoká lopta umožní hlavičku alebo volej,
+* control skill ovplyvňuje veľkosť kontrolnej obálky,
+* hráč bežiaci proti smeru lopty má horší dotyk,
+* výsledok musí byť deterministický.
+
+Nepoužívaj náhodnú chybu pri každom prijatí.
+
+---
+
+# 9. TRAJECTORY PREDICTOR
+
+Implementuj najhodnotnejší koncept z YSoccer: viacnásobnú predikciu budúcej trajektórie.
+
+Vytvor:
+
+```text
+src/game/simulation/trajectoryPredictor.ts
+```
+
+Podporuj tri varianty:
+
+```ts
+interface BallTrajectorySet {
+  curveLeft: PredictedBallPoint[];
+  neutral: PredictedBallPoint[];
+  curveRight: PredictedBallPoint[];
+}
+```
+
+Bod:
+
+```ts
+interface PredictedBallPoint {
+  tickOffset: number;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+}
+```
+
+Predikcia:
+
+* používa rovnakú fyziku ako reálna lopta,
+* nesmie meniť aktívny BallState,
+* používa dočasnú kópiu fyzikálneho stavu,
+* predikuje minimálne 1,5 až 2,5 sekundy,
+* môže používať nižšiu frekvenciu než hlavná simulácia,
+* aktualizuje sa iba pri významnej zmene rýchlosti, rotácie alebo kontaktu,
+* podporuje caching.
+
+Predikciu používaj pre:
+
+* výber hráča,
+* AI interception,
+* brankára,
+* hlavičky,
+* voleje,
+* pass assistance,
+* kameru,
+* debug overlay.
+
+Nekopíruj pôvodné rozsahy ani substep hodnoty bez vlastného benchmarku.
+
+---
+
+# 10. PREDIKOVANÝ ČAS HRÁČA K LOPTE
+
+Vytvor:
+
+```text
+src/game/simulation/interception.ts
+```
+
+Pre každého kandidáta vypočítaj:
+
+```ts
+interface InterceptionEstimate {
+  playerId: number;
+  trajectory: 'LEFT' | 'NEUTRAL' | 'RIGHT';
+  interceptTick: number | null;
+  interceptPoint: Vec3 | null;
+  arrivalMargin: number;
+  requiresSprint: boolean;
+  action:
+    | 'CONTROL'
+    | 'HEADER'
+    | 'VOLLEY'
+    | 'TACKLE'
+    | 'KEEPER_SAVE'
+    | null;
+}
+```
+
+Do odhadu zahrň:
+
+* maximálnu rýchlosť,
+* aktuálnu rýchlosť,
+* smer pohybu,
+* čas otočenia,
+* zrýchlenie,
+* reakčný čas,
+* výšku lopty,
+* dosah hráča,
+* jeho rolu,
+* stav akcie,
+* aktuálne recovery.
+
+Nepoužívaj:
+
+```ts
+distance / currentSpeed
+```
+
+ako jediný odhad.
+
+Tento systém sa stane spoločným zdrojom pre:
+
+* auto-switch,
+* AI,
+* brankára,
+* prijatie prihrávky.
+
+---
+
+# 11. POHYB HRÁČA
+
+Analógová intenzita musí ovplyvňovať rýchlosť.
+
+Použi:
+
+```ts
+const magnitude = clamp(length(moveX, moveY), 0, 1);
+```
+
+Rozsahy:
+
+```text
+0.00–0.20 = stoj
+0.20–0.45 = chôdza
+0.45–0.78 = klus
+0.78–1.00 = beh
+plné vychýlenie + sprint = šprint
+```
+
+Klávesnica môže používať digitálny arkádový profil.
+
+Pridaj:
+
+* deadzone,
+* response curve,
+* samostatnú rýchlosť s loptou,
+* rýchle, ale nie okamžité otočenie,
+* mierne spomalenie pri otočení o 180°.
+
+Odstráň opakované násobenie velocity pri prudkom otočení.
+
+Namiesto toho:
+
+* znižuj dostupné zrýchlenie podľa uhla,
+* aplikuj jednorazový braking impulse,
+* sleduj začiatok sharp-turn stavu,
+* neaplikuj trest každý tick.
+
+Hráč musí pôsobiť arkádovo a okamžite reagovať.
+
+---
+
+# 12. KONTEXTOVÉ OVLÁDANIE
+
+Vytvor predvolený režim:
+
+```text
+CLASSIC ARCADE
+```
+
+Použi tri hlavné tlačidlá.
+
+## ACTION
+
+S loptou:
+
+* krátky tap mimo streleckej pozície = krátka prihrávka,
+* krátky tap v dobrej streleckej pozícii a smerom na bránu = rýchla strela,
+* podržanie = silná prihrávka alebo silná strela,
+* pri vysokej lopte = hlavička alebo volej,
+* modifier + action = lob alebo chip.
+
+Bez lopty:
+
+* pri nízkej lopte = standing tackle alebo poke,
+* pri vysokej lopte = hlavička,
+* pri lopte vo vhodnej vzdialenosti = blok,
+* vedľa súpera = shoulder challenge.
+
+## TACKLE
+
+Bez lopty:
+
+* slide tackle.
+
+S loptou:
+
+* sprint alebo skill modifier podľa nastavenia.
+
+## SWITCH/SPECIAL
+
+Počas hry:
+
+* manuálne prepnutie.
+
+Počas prerušenia:
+
+* otvorenie Special Menu.
+
+Pri dostupnom kapitánskom špeciále:
+
+* aktivácia Super Shot.
+
+V debug overlayi zobraz:
+
+```text
+Context action: SHORT_PASS
+Reason: teammate in input cone, outside shooting zone
+Alternatives: DRIVEN_PASS, HOLD
+```
+
+Akcia nesmie byť náhodne premenená na inú.
+
+---
+
+# 13. PRIHRÁVKY A MIERENIE
+
+Oddeľ:
+
+```ts
+moveX
+moveY
+aimX
+aimY
+```
+
+Gamepad:
+
+* ľavá páčka = pohyb,
+* pravá páčka = presné mierenie,
+* bez pravej páčky sa použije movement/facing.
+
+Klávesnica:
+
+* smer počas nabíjania upravuje aim,
+* pohyb počas wind-up sa výrazne spomalí.
+
+Prihrávkový targeting musí hodnotiť:
+
+* smer vstupu,
+* uhol k spoluhráčovi,
+* vzdialenosť,
+* predpokladaný pohyb príjemcu,
+* čas lopty k príjemcovi,
+* čas obrancov k prihrávkovej dráhe,
+* bezpečnosť koridoru,
+* taktickú hodnotu.
+
+Vytvor:
+
+```text
+src/game/simulation/passTargeting.ts
+src/game/simulation/passLane.ts
+```
+
+Prihrávka sa smie zablokovať iba vtedy, keď obranca dokáže fyzicky dosiahnuť jej trajektóriu.
+
+Podporuj:
+
+* short pass,
+* driven pass,
+* through pass,
+* lob pass,
+* back pass,
+* one-touch pass,
+* first-time cross.
+
+---
+
+# 14. AFTERTOUCH
+
+Vytvor:
+
+```text
+src/game/simulation/aftertouch.ts
+```
+
+Stav:
+
+```ts
+interface AftertouchState {
+  sourcePlayerId: number | null;
+  activeFromTick: number;
+  expiresAtTick: number;
+  lateralInput: number;
+  verticalInput: number;
+  maxCurve: number;
+  remainingInfluence: number;
+}
+```
+
+Po kopnutí lopty môže hráč krátko upravovať:
+
+* bočné zakrivenie,
+* výšku,
+* pokles,
+* rotáciu.
+
+Dĺžka okna závisí od akcie:
+
+```text
+short pass: minimálna
+driven pass: malá
+normal shot: stredná
+power shot: väčšia
+Super Shot: výrazná
+```
+
+Pravidlá:
+
+* aftertouch postupne slabne,
+* nesmie otočiť loptu o nereálny uhol,
+* ovplyvňuje trajectory predictor,
+* musí byť deterministický,
+* AI používa rovnaké fyzikálne limity,
+* server je autoritatívny.
+
+---
+
+# 15. AKČNÝ SYSTÉM
+
+Každá akcia má:
+
+```text
+WINDUP
+CONTACT
+RECOVERY
+```
+
+Kontakt s loptou nastane presne raz.
+
+Pohyb počas akcie je definovaný multiplierom:
+
+```ts
+interface ActionLocomotion {
+  windupMultiplier: number;
+  contactMultiplier: number;
+  recoveryMultiplier: number;
+  turnMultiplier: number;
+}
+```
+
+Pohyb nesmie prepísať stav akcie ani animáciu.
+
+Renderer vyberá animáciu podľa:
+
+```ts
+currentAction.type
+currentAction.phase
+facing
+movementSpeed
+```
+
+Nie iba podľa `player.state`.
+
+Implementuj:
+
+* shortPass,
+* drivenPass,
+* lobPass,
+* throughPass,
+* normalShot,
+* powerShot,
+* chipShot,
+* volley,
+* header,
+* standingTackle,
+* pokeTackle,
+* shoulderChallenge,
+* slideTackle,
+* block,
+* goalkeeperCatch,
+* goalkeeperParry,
+* goalkeeperDive.
+
+---
+
+# 16. STABILNÉ PREPÍNANIE HRÁČA
+
+Vytvor:
+
+```text
+src/game/simulation/playerSelection.ts
+```
+
+Ak tím drží loptu:
+
+* ovládanie sa prepne na majiteľa,
+* pri plánovanej prihrávke možno označiť predpokladaného príjemcu,
+* skutočné ovládanie sa odovzdá v jasne definovanom okamihu.
+
+Ak súper drží loptu:
+
+* vyber najlepšieho obrancu medzi loptou a vlastnou bránou,
+* zohľadni predikovaný čas k lopte,
+* zohľadni pressing assignment.
+
+Ak je lopta voľná:
+
+* vyber hráča s najlepším interception estimate,
+* nie automaticky najbližšieho podľa XY.
+
+Pridaj:
+
+```ts
+lastSwitchTick
+switchCooldownTicks
+manualLockUntilTick
+candidateId
+candidateScore
+currentScore
+```
+
+Použi hysteréziu:
+
+```ts
+candidateScore >= currentScore + SWITCH_MARGIN
+```
+
+Manuálne prepnutie:
+
+* má okamžitú prioritu,
+* zostane zamknuté približne 0,7–0,9 sekundy,
+* nesmie byť hneď prepísané automatikou.
+
+Automatické prepnutie:
+
+* maximálne raz za cooldown,
+* nesmie oscilovať medzi dvomi hráčmi,
+* neprepína na brankára bez vážneho dôvodu.
+
+---
+
+# 17. DÁTOVO RIADENÉ FORMÁCIE
+
+Inšpiruj sa konceptom:
+
+```text
+hráč × zóna lopty × cieľová pozícia
+```
+
+Vytvor vlastný systém so 35 alebo podobným počtom logických zón.
+
+Nepreberaj pôvodné taktické dáta.
+
+Vytvor:
+
+```text
+src/game/data/formations/
+src/game/simulation/teamShape.ts
+src/game/simulation/ballZones.ts
+```
+
+Podporuj:
+
+* 4-4-2,
+* 4-3-3,
+* 4-2-3-1,
+* 3-5-2,
+* 3-4-3,
+* attacking,
+* defensive,
+* custom.
+
+Dátový model:
+
+```ts
+interface FormationDefinition {
+  id: string;
+  name: string;
+  slots: FormationSlot[];
+}
+
+interface FormationSlot {
+  role: PlayerRole;
+  zoneTargets: Record<BallZoneId, Vec2>;
+  supportRadius: number;
+  pressPriority: number;
+  pairedSlotId?: string;
+}
+```
+
+Taktická poloha hráča závisí od:
+
+* zóny lopty,
+* vlastníctva,
+* prechodovej fázy,
+* skóre,
+* času,
+* role,
+* pressing assignmentu.
+
+Neposúvaj všetkých hráčov rovnakým vektorom za loptou.
+
+---
+
+# 18. CENTRÁLNA TÍMOVÁ AI
+
+Najprv prideľ tímové úlohy:
+
+```ts
+type TeamAssignment =
+  | 'BALL_CARRIER'
+  | 'PRIMARY_RECEIVER'
+  | 'SUPPORT_NEAR'
+  | 'SUPPORT_WIDE'
+  | 'RUN_IN_BEHIND'
+  | 'BACK_POST_RUN'
+  | 'SAFETY'
+  | 'PRESSER'
+  | 'COVER'
+  | 'MARKER'
+  | 'LANE_BLOCKER'
+  | 'GOALKEEPER';
+```
+
+Až potom individuálna AI vyberie konkrétnu akciu.
+
+Individuálna AI nesmie prepísať tímovú úlohu inou nesúvisiacou úlohou.
+
+AI rozhoduje v rôznych intervaloch:
+
+* urgent reaction,
+* steering update,
+* tactical target update,
+* pass search,
+* shot evaluation.
+
+Neaktualizuj všetko každý tick.
+
+Pri pohybe s loptou hodnoti tri smery:
+
+```text
+ľavý
+rovno
+pravý
+```
+
+Skóre smeru zahŕňa:
+
+* cieľovú bránu,
+* hranice ihriska,
+* spoluhráčov,
+* súperov,
+* voľný priestor,
+* riziko straty lopty.
+
+Použi plynulejšie smerovanie než pevné skoky po 45°, ale zachovaj arkádovú čitateľnosť.
+
+Strelecké rozhodnutie hodnotí:
+
+* viditeľnú šírku brány,
+* vzdialenosť,
+* obrancov v dráhe,
+* postavenie brankára,
+* dominantnú nohu alebo facing,
+* finishing skill.
+
+---
+
+# 19. BRANKÁR S AKTÍVNYMI SAVE ZÓNAMI
+
+Vytvor:
+
+```text
+src/game/simulation/goalkeeper/
+```
+
+Stavy:
+
+```ts
+type GoalkeeperMode =
+  | 'SET'
+  | 'TRACK'
+  | 'CLOSE_ANGLE'
+  | 'RUSH'
+  | 'CATCH_LOW'
+  | 'CATCH_HIGH'
+  | 'DIVE_LOW'
+  | 'DIVE_MIDDLE'
+  | 'DIVE_HIGH'
+  | 'PARRY'
+  | 'PUNCH'
+  | 'FOOT_SAVE'
+  | 'RECOVER'
+  | 'DISTRIBUTE';
+```
+
+Každý animačný frame môže definovať save hit zones:
+
+```ts
+interface SaveHitZone {
+  frame: number;
+  type: 'CATCH' | 'PARRY' | 'DEFLECT';
+  shape: Circle | Capsule | Polygon;
+  zMin: number;
+  zMax: number;
+}
+```
+
+Nepoužívaj pôvodnú pixel masku YSoccer.
+
+Vytvor:
+
+* vlastné geometrické hit zóny,
+* alebo vlastné originálne masky viazané na nové spritesheety.
+
+Kolízia musí závisieť od:
+
+* aktuálneho frame,
+* polohy tela,
+* polohy rúk,
+* výšky lopty,
+* rýchlosti lopty,
+* goalkeeping skill.
+
+Výsledok kontaktu:
+
+* CATCH,
+* PARRY,
+* PUNCH,
+* DEFLECT,
+* MISS.
+
+Brankár počas dive nesmie byť vylúčený z kontaktu s loptou.
+
+Pri rush-out okamžite nastav desired velocity k vypočítanému intercept pointu.
+
+---
+
+# 20. FYZIKA BRÁNY A SIETE
+
+Vytvor samostatný modul:
+
+```text
+src/game/simulation/goalGeometry.ts
+```
+
+Rozlišuj:
+
+* ľavú žrď,
+* pravú žrď,
+* brvno,
+* horné rohy,
+* zadnú sieť,
+* bočnú sieť,
+* hornú sieť,
+* vonkajšiu sieť.
+
+Použi swept collision detection medzi predchádzajúcou a aktuálnou polohou lopty.
+
+Každý povrch má vlastné:
+
+* restitution,
+* tangential damping,
+* spin response,
+* zvukový event.
+
+Sieť:
+
+* výrazne tlmí rýchlosť,
+* neodráža ako kov,
+* nesmie loptu teleportovať,
+* môže produkovať vizuálnu deformáciu.
+
+Emituj:
+
+```text
+POST_HIT
+CROSSBAR_HIT
+NET_HIT_BACK
+NET_HIT_SIDE
+NET_HIT_TOP
+```
+
+---
+
+# 21. SERIALIZOVATEĽNÉ TACKLE A FAULY
+
+Odstráň WeakMap alebo iný externý neseializovateľný stav.
+
+Použi:
+
+```ts
+interface TackleState {
+  startedTick: number;
+  activeUntilTick: number;
+  ballContactTick: number | null;
+  playerContactTick: number | null;
+  approachAngle: number;
+  relativeSpeed: number;
+  contactPoint: Vec2 | null;
+}
+```
+
+Faul hodnoti podľa:
+
+* kontaktu lopty a hráča,
+* poradia kontaktov,
+* uhla,
+* relatívnej rýchlosti,
+* smeru zákroku,
+* tackling skill,
+* control skill súpera.
+
+Nekopíruj pravdepodobnosti z YSoccer.
+
+Vytvor predvídateľný základ a len malú deterministickú variabilitu.
+
+---
+
+# 22. MATCH STATE MACHINE
+
+Rozdeľ zápas na explicitné stavy:
+
+```ts
+type MatchPhase =
+  | 'INTRO'
+  | 'STARTING_POSITIONS'
+  | 'KICKOFF'
+  | 'PLAYING'
+  | 'THROW_IN_SETUP'
+  | 'THROW_IN'
+  | 'CORNER_SETUP'
+  | 'CORNER'
+  | 'GOAL_KICK_SETUP'
+  | 'GOAL_KICK'
+  | 'FREE_KICK_SETUP'
+  | 'FREE_KICK'
+  | 'PENALTY_SETUP'
+  | 'PENALTY'
+  | 'GOAL'
+  | 'HALFTIME'
+  | 'EXTRA_TIME'
+  | 'SHOOTOUT'
+  | 'FULLTIME'
+  | 'PAUSED'
+  | 'REPLAY';
+```
+
+Každý stav musí mať:
+
+* entry,
+* update,
+* exit,
+* povolené vstupy,
+* timeout,
+* podmienky prechodu.
+
+Nerozmiestňuj pravidlá zápasu do veľkého bloku podmienok.
+
+Štandardné situácie musia byť rýchle a arkádové.
+
+---
+
+# 23. KAMERA
+
+Vytvor režimy:
+
+```ts
+type CameraMode =
+  | 'STILL'
+  | 'FOLLOW_BALL'
+  | 'FOLLOW_ATTACK'
+  | 'REACH_TARGET'
+  | 'GOAL_REPLAY';
+```
+
+FOLLOW_BALL:
+
+* primárne sleduje loptu,
+* používa look-ahead podľa velocity,
+* má deadzone,
+* má inertial damping,
+* nepreskakuje pri prepnutí hráča.
+
+REACH_TARGET:
+
+* používa sa pri výkope, prerušení a replayi,
+* má viac rýchlostných profilov.
+
+Camera shake:
+
+* nie je súčasťou simulačnej kamery,
+* aplikuje sa presne raz pri renderovaní,
+* odstráň duplicitný starý shake z `cameraOrigin`.
+
+V hlavnom režime vytvor perspektívu inšpirovanú Taito Cup Finals:
+
+* výrazné postavy,
+* horizontálne scrollovanie,
+* mierna diagonálna perspektíva,
+* čitateľná bránka,
+* stabilný zoom,
+* 4:3 kompozícia.
+
+---
+
+# 24. REPLAY RING BUFFER
+
+Vytvor kompaktný buffer:
+
+```text
+src/game/replay/
+```
+
+Ukladaj iba údaje potrebné pre render:
+
+```ts
+interface ReplayFrame {
+  tick: number;
+  ball: CompactBallFrame;
+  players: CompactPlayerFrame[];
+  camera: CompactCameraFrame;
+  score: [number, number];
+  phase: MatchPhase;
+}
+```
+
+Použi:
+
+* typed arrays alebo kompaktné objekty,
+* kruhový buffer,
+* konfigurovateľnú frekvenciu,
+* maximálnu dobu 5–10 sekúnd pre goal replay,
+* samostatné uloženie najlepších highlightov.
+
+Replay nesmie ukladať celý React stav.
+
+Po góle:
+
+* zachovaj posledných približne 5 sekúnd,
+* prehraj ich spomalene,
+* umožni preskočenie,
+* potom sa bezpečne vráť na aktuálny zápas.
+
+Najskôr offline, až potom online.
+
+---
+
+# 25. POČASIE A POVRCH
+
+Vytvor:
+
+```ts
+type Weather = 'CLEAR' | 'RAIN' | 'SNOW' | 'FOG' | 'WIND';
+
+type Surface = 'DRY' | 'WET' | 'MUDDY' | 'FROZEN';
+```
+
+Vplyv:
+
+* dážď mierne znižuje trenie,
+* mokrý povrch predlžuje sklz lopty,
+* sneh mierne zvyšuje odpor,
+* vietor pôsobí hlavne na vysokú loptu,
+* sila vetra má osem základných smerov,
+* hmla je primárne vizuálna.
+
+Počasie musí byť:
+
+* deterministické,
+* seeded,
+* synchronizovateľné online,
+* mierne,
+* vypínateľné.
+
+Nenarušuj základnú hrateľnosť extrémnymi hodnotami.
+
+---
+
+# 26. HRÁČI, TÍMY A DÁTA
+
+Vytvor dátový systém:
+
+```ts
+interface PlayerDefinition {
+  id: string;
+  name: string;
+  shirtName: string;
+  number: number;
+  role: PlayerRole;
+  nationality?: string;
+  appearance: PlayerAppearance;
+  skills: PlayerSkills;
+  traits: PlayerTrait[];
+}
+
+interface PlayerSkills {
+  passing: number;
+  shooting: number;
+  heading: number;
+  tackling: number;
+  control: number;
+  speed: number;
+  finishing: number;
+  goalkeeping: number;
+}
+```
+
+Tím:
+
+```ts
+interface TeamDefinition {
+  id: string;
+  name: string;
+  shortName: string;
+  type: 'CLUB' | 'NATIONAL' | 'CUSTOM';
+  kits: KitDefinition[];
+  players: PlayerDefinition[];
+  lineup: string[];
+  formationId: string;
+  captainId: string;
+  stadiumId?: string;
+}
+```
+
+Použi iba originálne fiktívne tímy v základnej distribúcii.
+
+Pridaj neskôr:
+
+* editor tímov,
+* editor hráčov,
+* editor dresov,
+* editor formácií,
+* import/export komunitných balíkov.
+
+---
+
+# 27. TAITO CUP FINALS PREZENTÁCIA
+
+YSoccer je referencia pre gameplay.
+
+Taito Cup Finals je referencia pre:
+
+* vizuálnu mierku,
+* rýchlosť,
+* dynamiku,
+* prezentáciu,
+* kapitána,
+* arkádové strely,
+* menu a turnajovú atmosféru.
+
+Použi originálne assety.
+
+Vzhľad:
+
+* detailné 16-bitové postavy,
+* výrazné animácie,
+* sýta zelená tráva,
+* veľké tiene,
+* 4:3 obraz,
+* publikum a reklamné tabule,
+* fyzická bránka,
+* retro HUD,
+* minimum cyberpunk neónu.
+
+Kapitán:
+
+* samostatný portrét,
+* výrazná páska,
+* vyššie vybrané schopnosti,
+* špeciálna animácia,
+* vlastný Super Shot.
+
+Super Shot:
+
+* vyžaduje meter alebo jednotku,
+* nie je automatický gól,
+* brankár ho môže chytiť alebo vyraziť,
+* používa silnejší aftertouch,
+* má dlhší recovery,
+* vizuálne sa jasne líši.
+
+---
+
+# 28. PRESENTATION EVENTS
+
+Zmeň nejednoznačný event s pixelovou hodnotou `power`.
+
+Použi:
+
+```ts
+type KickType =
+  | 'SHORT_PASS'
+  | 'DRIVEN_PASS'
+  | 'THROUGH_PASS'
+  | 'LOB_PASS'
+  | 'NORMAL_SHOT'
+  | 'POWER_SHOT'
+  | 'SUPER_SHOT'
+  | 'HYPER_SHOT';
+
+interface BallKickedEvent {
+  type: 'BALL_KICKED';
+  kickType: KickType;
+  speedMps: number;
+  normalizedIntensity: number;
+  contactPlayerId: number;
+  tick: number;
+}
+```
+
+Efekty:
+
+* short pass: bez shake,
+* driven pass: bez shake,
+* normal shot: jemný shake,
+* power shot: mierny shake,
+* Super Shot: silnejší krátky shake,
+* žrď: ostrý impulz,
+* gól: stredný impulz.
+
+Emituj tiež:
+
+* BALL_RECEIVED,
+* HEAVY_TOUCH,
+* TACKLE_CONTACT,
+* POST_HIT,
+* CROSSBAR_HIT,
+* NET_HIT,
+* GK_CATCH,
+* GK_PARRY,
+* GK_DEFLECT,
+* GOAL_SCORED.
+
+---
+
+# 29. GAMEPLAY LAB
+
+Vytvor development route:
+
+```text
+/gameplay-lab
+```
+
+Scenáre:
+
+1. pohyb bez lopty,
+2. dribling bez súpera,
+3. krátke prihrávky,
+4. prudké prihrávky,
+5. through ball,
+6. aftertouch,
+7. streľba na prázdnu bránu,
+8. streľba proti brankárovi,
+9. hlavička,
+10. volej,
+11. standing tackle,
+12. slide tackle,
+13. auto-switch,
+14. 2v1,
+15. 5v5,
+16. 7v7,
+17. 11v11,
+18. rohový kop,
+19. voľný kop,
+20. replay.
+
+Nástroje:
+
+* reset,
+* pause,
+* slow motion,
+* single tick,
+* zmena seed,
+* vypnutie AI,
+* výber hráča,
+* zobrazenie trajektórií,
+* zobrazenie intercept points,
+* zobrazenie save hit zones,
+* zobrazenie ball mode,
+* zobrazenie action phase,
+* zobrazenie switch score.
+
+---
+
+# 30. PRÍSNE TESTY
+
+## Input
+
+* krátky tap sa nestratí pri 144 FPS,
+* edge sa spracuje presne raz,
+* catch-up tick nezopakuje prihrávku.
+
+## Ownership
+
+* `CONTROLLED` vždy má ownerId,
+* `FREE` nikdy nemá ownerId,
+* po kontakte strely je ownerId null,
+* hráč bez vlastníctva nemôže začať kop,
+* žiadny desync po 100 000 tickoch.
+
+## Dribling
+
+* normálny beh nespôsobí stratu,
+* šprint nespôsobí náhodnú stratu,
+* vizuálna poloha lopty nemení vlastníctvo,
+* tackle jasne ukončí kontrolu.
+
+## Trajectory
+
+* neutral trajectory zodpovedá skutočnej fyzike,
+* left/right spin zakriví loptu správne,
+* predictor nemení aktívny state,
+* cache sa invaliduje po kontakte.
+
+## Interception
+
+* rýchly hráč dosiahne bod skôr,
+* hráč bežiaci opačne dostane turn penalty,
+* vysokú loptu nemožno spracovať nohou,
+* brankárska zóna sa započíta.
+
+## Player selection
+
+* majiteľ lopty sa stane aktívnym,
+* manuálny lock sa rešpektuje,
+* switch neosciluje,
+* kandidát musí prekonať hysteréziu.
+
+## Goalkeeper
+
+* catch iba v catch zone,
+* parry ponechá loptu živú,
+* dive môže fyzicky zasiahnuť loptu,
+* rush mení velocity smerom k interceptu,
+* lopta mimo dosahu nie je chytená.
+
+## AI
+
+* iba jeden primary presser,
+* cover assignment sa neprepíše,
+* spoluhráči vytvárajú prihrávkové možnosti,
+* AI neprihráva cez očividne blokovanú dráhu,
+* formácia reaguje na zónu lopty.
+
+## Prezentácia
+
+* krátka prihrávka nespustí Power Shot shake,
+* shake sa aplikuje iba raz,
+* replay buffer neprekročí limit.
+
+Nepoužívaj neurčité testy typu:
+
+```ts
+expect(controlled || close).toBe(true);
+```
+
+Kontroluj presný požadovaný výsledok.
+
+---
+
+# 31. SIMULAČNÉ PLAYTESTY
+
+Spusti:
+
+* 100 zápasov 5v5 počas vývoja,
+* 100 zápasov 7v7,
+* 100 zápasov 11v11,
+* všetky obtiažnosti,
+* viacero seedov.
+
+Zbieraj:
+
+* góly,
+* strely,
+* prihrávky,
+* úspešnosť prihrávok,
+* straty lopty,
+* interception,
+* čas mimo hry,
+* auto-switch frekvenciu,
+* fauly,
+* zákroky brankára,
+* ownership invariant errors,
+* zhlukovanie hráčov,
+* priemerný frame time.
+
+Zápas nesmie byť označený ako úspešný iba preto, že sa nezasekol.
+
+Musí vytvárať zmysluplné:
+
+* prihrávky,
+* útoky,
+* strely,
+* obranné návraty,
+* zákroky.
+
+---
+
+# 32. PORADIE IMPLEMENTÁCIE
+
+Dodrž toto poradie:
+
+1. baseline,
+2. clean-room dokumentácia,
+3. input queue,
+4. jediný zdroj vlastníctva,
+5. BallMode state machine,
+6. arkádový dribling,
+7. analógový pohyb,
+8. action locomotion,
+9. príjem lopty,
+10. trajectory predictor,
+11. interception estimator,
+12. prihrávky,
+13. streľba a aftertouch,
+14. contextual controls,
+15. player selection,
+16. team assignments,
+17. zonálne formácie,
+18. obrana a fauly,
+19. brankár,
+20. goal/net geometry,
+21. match state machine,
+22. Gameplay Lab,
+23. prísne testy,
+24. 7v7 vertical slice,
+25. 11v11,
+26. kamera,
+27. originálne spritesheety,
+28. Taito-style HUD,
+29. kapitáni a Super Shot,
+30. replay,
+31. počasie,
+32. turnaje a editory,
+33. multiplayer.
+
+Nevykonávaj všetky etapy v jednom obrovskom commite.
+
+Každá etapa musí mať:
+
+* funkčný výsledok,
+* testy,
+* krátky manuálny playtest,
+* samostatný commit,
+* aktualizovaný progress dokument.
+
+---
+
+# 33. DEFINITION OF DONE
+
+Projekt je dokončený až keď:
+
+1. Krátke vstupy sa nestrácajú.
+
+2. Lopta má iba jeden autoritatívny zdroj vlastníctva.
+
+3. Dribling je spoľahlivý.
+
+4. Hráč sa ovláda okamžite a predvídateľne.
+
+5. Analógová intenzita mení rýchlosť.
+
+6. Prudké otočenie nespôsobuje lepkavé zastavenie.
+
+7. Prihrávky majú bezpečné a čitateľné targeting pravidlá.
+
+8. Bežná prihrávka sa spoľahlivo spracuje.
+
+9. Aftertouch je použiteľný, ale nie prehnaný.
+
+10. Predikcia lopty zodpovedá skutočnej fyzike.
+
+11. Auto-switch používa predikovaný čas k lopte.
+
+12. Manuálne prepnutie zostáva stabilné.
+
+13. Tímy zachovávajú formáciu.
+
+14. Iba jeden obranca je primary presser.
+
+15. Spoluhráči vytvárajú možnosti na prihrávku.
+
+16. Brankár fyzicky zasahuje loptu save zónami.
+
+17. Žrde, brvno a sieť majú odlišné kolízie.
+
+18. Jedno kontextové tlačidlo je dostatočné na základnú hru.
+
+19. Hra je zábavná s vypnutými efektmi.
+
+20. 7v7 zápas funguje pred rozšírením na 11v11.
+
+21. 11v11 udrží stabilný výkon.
+
+22. Vizuál je originálny a pripomína Taito Cup Finals iba štýlom.
+
+23. Neboli použité YSoccer assety ani mechanicky preložený Java kód.
+
+24. Typecheck prejde.
+
+25. Lint prejde.
+
+26. Unit testy prejdú.
+
+27. Build prejde.
+
+28. Simulačné zápasy neporušia invarianty.
+
+29. Manuálny playtest potvrdí, že hra nepôsobí ako technické demo.
+
+---
+
+# 34. ZÁVEREČNÁ DOKUMENTÁCIA
+
+Vytvor:
+
+```text
+docs/YSOCCER_DECOMPILE_AUDIT.md
+docs/YSOCCER_BEHAVIOR_MAP.md
+docs/CLEAN_ROOM_IMPLEMENTATION.md
+docs/BALL_ARCHITECTURE.md
+docs/TRAJECTORY_PREDICTION.md
+docs/PLAYER_SELECTION.md
+docs/TEAM_AI.md
+docs/GOALKEEPER_SYSTEM.md
+docs/TACTICS_SYSTEM.md
+docs/GAMEPLAY_PLAYTEST.md
+docs/ARCADE_REBUILD_FINAL_REPORT.md
+```
+
+Finálny report musí jasne rozlišovať:
+
+* systémy pozorované v YSoccer,
+* vlastné TypeScript implementácie,
+* systémy, ktoré boli odmietnuté,
+* použité externé assety a licencie,
+* stav 5v5,
+* stav 7v7,
+* stav 11v11,
+* výsledky testov,
+* výsledky playtestov,
+* známe nedostatky.
+
+Nevydávaj funkciu za dokončenú, keď existuje iba typ, prázdny modul, TODO alebo zelený test bez skutočnej integrácie.
+
+Najvyššia priorita:
+
+```text
+HRATEĽNOSŤ
+→ ODOZVA
+→ LOPTA
+→ PREPÍNANIE
+→ TÍMOVÁ AI
+→ BRANKÁR
+→ PREZENTÁCIA
+```
