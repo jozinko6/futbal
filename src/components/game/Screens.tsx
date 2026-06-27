@@ -292,15 +292,16 @@ export function HowToScreen({ onBack }: { onBack: () => void }) {
     <div className="flex flex-1 flex-col items-center justify-center gap-4 p-4">
       <h2 className="font-mono text-2xl font-black uppercase text-amber-300">Ako hrať</h2>
       <div className={`${PANEL} w-full max-w-lg space-y-3 p-6 font-mono text-sm text-emerald-100`}>
-        <Control keys="WASD / Šípky" desc="Pohyb hráča" />
-        <Control keys="J" desc="Prihrávka" />
-        <Control keys="I" desc="Vysoká prihrávka (lob)" />
-        <Control keys="K" desc="Strela (drž pre silu) / Sklz (bez lopty)" />
+        <Control keys="WASD / Šípky" desc="Pohyb (analóg = rýchlosť)" />
+        <Control keys="J" desc="S loptou: prihrávka / Bez lopty: obrana" />
+        <Control keys="I" desc="Lob prihrávka / modifikátor strely" />
+        <Control keys="K" desc="S loptou: strela / Bez lopty: sklz" />
         <Control keys="L / Shift" desc="Šprint" />
         <Control keys="Q" desc="Prepnutie hráča" />
         <Control keys="Esc" desc="Pauza" />
         <div className="my-2 h-px bg-emerald-400/30" />
-        <p className="text-xs text-emerald-300/70">Gamepad: ľavá páčka/D-pad pohyb, A prihrávka, B strela/sklz, X lob, RB šprint, LB prepínanie, Start pauza.</p>
+        <p className="text-xs text-emerald-300/70">One-touch pass: stlač J tesne pred príchodom lopty.</p>
+        <p className="text-xs text-emerald-300/70">Gamepad: A=prihrávka/obrana, B=strela/sklz, X=lob, RB=šprint, LB=prepínať.</p>
         <p className="text-xs text-emerald-300/70">Mobil: virtuálny joystick + tlačidlá, landscape, multitouch.</p>
       </div>
       <RetroButton variant="ghost" onClick={onBack} className="w-full max-w-lg">
