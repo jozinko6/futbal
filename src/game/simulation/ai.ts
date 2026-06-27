@@ -8,7 +8,7 @@
  */
 import {
   FIELD_CX, FIELD_CY, FIELD_RIGHT, FIELD_X, m, mps,
-  DIFFICULTY_PARAMS, AI_INTERVALS, MOVEMENT,
+  DIFFICULTY_PARAMS, AI_INTERVALS, MOVEMENT, FIXED_DT,
   type FutsalRole,
 } from './constants';
 import type { AiAction, MatchState, PlayerEntity, Team, WithBallAction, OffBallAction } from './types';
@@ -88,7 +88,9 @@ function pickBest(scores: Record<string, number>): string {
 
 function scoreWithBall(state: MatchState, p: PlayerEntity, params: DiffParams, out: Record<string, number>): void {
   const goalX = attackingGoalX(p.team);
+  const ownX = ownGoalX(p.team);
   const dGoal = dist(p.x, p.y, goalX, FIELD_CY);
+  const dOwnGoal = Math.abs(p.x - ownX); // distance to own goal line
   const pressure = 1 - Math.min(1, distToNearestOpponent(state, p.team, p.x, p.y) / m(2));
   const mateOpen = countOpenMates(state, p);
   out.DRIBBLE = 0.4 + (1 - pressure) * 0.3 - (dGoal < m(8) ? 0.2 : 0);
@@ -98,7 +100,9 @@ function scoreWithBall(state: MatchState, p: PlayerEntity, params: DiffParams, o
   out.BACK_PASS = pressure * 0.4 + 0.1;
   out.LOB_PASS = pressure > 0.5 ? 0.3 + params.passRisk * 0.2 : 0.1;
   out.SHOOT = dGoal < m(10) ? 0.5 + (1 - dGoal / m(10)) * 0.4 - pressure * 0.2 : 0.05;
-  out.CLEAR_BALL = pressure > 0.7 && dGoal < m(6) ? 0.5 : 0.05;
+  // CLEAR_BALL: evaluated by distance to OWN goal and current danger — not the
+  // opponent's goal. High pressure near own goal → clear it.
+  out.CLEAR_BALL = pressure > 0.6 && dOwnGoal < m(8) ? 0.45 + pressure * 0.2 : 0.05;
   // Apply precision jitter.
   for (const k of Object.keys(out)) out[k] *= 0.85 + params.precision * 0.15;
 }
@@ -241,15 +245,39 @@ function planOffBall(state: MatchState, p: PlayerEntity, action: OffBallAction, 
     case 'MARK':
       if (p.markingTarget != null) {
         const m2 = state.players[p.markingTarget];
-        if (m2) p.aiTarget = { x: m2.x, y: m2.y };
+        if (m2) {
+          // Stand BETWEEN the opponent and own goal (not on top of the opponent).
+          const gx = ownGoalX(p.team);
+          const gy = FIELD_CY;
+          const ang = angleTo(m2.x, m2.y, gx, gy);
+          const offset = m(1.2); // 1.2 m toward own goal from the opponent
+          p.aiTarget = { x: m2.x + Math.cos(ang) * offset, y: m2.y + Math.sin(ang) * offset };
+        }
       }
       break;
     case 'PRESS':
       p.aiTarget = { x: ball.x, y: ball.y };
       break;
-    case 'INTERCEPT':
-      p.aiTarget = { x: ball.x, y: ball.y };
+    case 'INTERCEPT': {
+      // Predict the interception point: where the ball reaches the player's
+      // reachable radius given the player's max speed and reaction time.
+      const ballSp = Math.hypot(ball.vx, ball.vy);
+      const playerSpeed = mps(MOVEMENT.runSpeed);
+      const reaction = DIFFICULTY_PARAMS[state.difficulty].gkReactionMs / 1000;
+      let pred = { x: ball.x, y: ball.y };
+      if (ballSp > 1) {
+        // Step the ball forward up to ~1.5s, find the first point the player
+        // can reach in time (distance / playerSpeed + reaction).
+        for (let t = reaction; t < 1.5; t += FIXED_DT) {
+          const bx = ball.x + ball.vx * t;
+          const by = ball.y + ball.vy * t;
+          const d = dist(p.x, p.y, bx, by);
+          if (d / playerSpeed <= t) { pred = { x: bx, y: by }; break; }
+        }
+      }
+      p.aiTarget = pred;
       break;
+    }
     case 'RETURN_TO_FORMATION':
     default:
       p.aiTarget = p.dynamicFormationPosition;
