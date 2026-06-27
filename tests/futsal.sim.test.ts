@@ -96,7 +96,7 @@ describe('futsal 5v5 — 100 AI vs AI simulation matches', () => {
   const N = 100;
   const results: { completed: boolean; passes: number; maxCluster: number; ballStuck: boolean; gkOut: boolean; score: [number, number] }[] = [];
 
-  it('runs 100 matches and checks aggregate invariants', { testTimeout: 30000 }, () => {
+  it('runs 100 matches and checks aggregate invariants', () => {
     for (let i = 0; i < N; i++) {
       const r = runMatch(i + 1, 12);
       results.push({

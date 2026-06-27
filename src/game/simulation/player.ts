@@ -15,6 +15,7 @@ import { angleTo, approachAngle, dist, len } from './math';
 import { kickBall } from './ball';
 import { rngFloat } from './rng';
 import { startAction } from './actionSystem';
+import { resetContactTrack } from './fouls';
 
 // --- Movement --------------------------------------------------------------
 
@@ -401,6 +402,7 @@ export function startTackle(p: PlayerEntity, dirX: number, dirY: number): boolea
   p.diveTime = DEFENSE.slideDuration;
   p.state = 'slide';
   p.facing = Math.atan2(p.diveDir.y, p.diveDir.x);
+  resetContactTrack(p);
   return true;
 }
 

@@ -7,7 +7,7 @@
 import {
   DEFAULT_HALF_LENGTH, DIFFICULTY_PARAMS, FIXED_DT, HALF_LENGTH_OPTIONS,
   GK_HOLD_MAX, PENALTY_SHOOTOUT_KICKS, PENALTY_SPOT_X, PLAYERS_PER_TEAM,
-  PLAYER_RADIUS, SHOOT_CHARGE_TIME, m,
+  PLAYER_RADIUS, TACKLE_RADIUS, SHOOT_CHARGE_TIME, m,
   FIELD_CX, FIELD_CY, FIELD_RIGHT, FIELD_X,
   type Difficulty,
 } from './constants';
@@ -27,6 +27,7 @@ import { aiAct } from './ai';
 import { updateTeamTactics } from './teamTactics';
 import { updateGoalkeeper } from './goalkeeper';
 import { stepAction } from './actionSystem';
+import { evaluateTackleFoul, recordBallContact, resetContactTrack } from './fouls';
 import { dist } from './math';
 
 export interface CreateMatchOptions {
@@ -383,18 +384,38 @@ export function stepMulti(state: MatchState, inputs: InputFrame[], dt: number): 
         }
       }
     }
-    // 6. Soft collisions + foul detection.
+    // 6. Soft collisions + proper foul detection (not automatic on slide).
+    // Track ball contact for sliding/standing tacklers first.
+    for (const p of state.players) {
+      if (p.state === 'tackle' || p.state === 'slide') {
+        if (dist(p.x, p.y, state.ball.x, state.ball.y) <= TACKLE_RADIUS) {
+          recordBallContact(p, state.tick);
+        }
+      }
+    }
     for (let i = 0; i < state.players.length; i++) {
       for (let j = i + 1; j < state.players.length; j++) {
         const a = state.players[i], b = state.players[j];
         resolvePlayerCollision(a, b);
         if (state.period === 'play' && a.team !== b.team) {
-          if ((a.state === 'tackle' || a.state === 'slide') && dist(a.x, a.y, b.x, b.y) < PLAYER_RADIUS * 2 + m(0.1)) {
-            awardFoul(state, a.team, a.x, a.y);
-            a.state = 'stunned'; a.stunnedTime = 0.8; a.diveTime = 0;
-          } else if ((b.state === 'tackle' || b.state === 'slide') && dist(a.x, a.y, b.x, b.y) < PLAYER_RADIUS * 2 + m(0.1)) {
-            awardFoul(state, b.team, b.x, b.y);
-            b.state = 'stunned'; b.stunnedTime = 0.8; b.diveTime = 0;
+          const contactDist = PLAYER_RADIUS * 2 + m(0.1);
+          const inContact = dist(a.x, a.y, b.x, b.y) < contactDist;
+          if (!inContact) continue;
+          // A sliding/standing tackler contacting an opponent → evaluate foul.
+          if (a.state === 'tackle' || a.state === 'slide') {
+            const ev = evaluateTackleFoul(state, a, b);
+            if (ev.foul) {
+              awardFoul(state, a.team, a.x, a.y);
+              a.state = 'stunned'; a.stunnedTime = 0.8; a.diveTime = 0;
+              resetContactTrack(a);
+            }
+          } else if (b.state === 'tackle' || b.state === 'slide') {
+            const ev = evaluateTackleFoul(state, b, a);
+            if (ev.foul) {
+              awardFoul(state, b.team, b.x, b.y);
+              b.state = 'stunned'; b.stunnedTime = 0.8; b.diveTime = 0;
+              resetContactTrack(b);
+            }
           }
         }
       }
