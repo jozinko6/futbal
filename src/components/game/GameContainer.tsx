@@ -267,6 +267,9 @@ export function GameContainer() {
       // Expose state for in-browser verification / debugging.
       if (typeof window !== 'undefined') {
         (window as unknown as { __rfa?: MatchState }).__rfa = s;
+        if (assetsRef.current) {
+          (window as unknown as { __field?: HTMLCanvasElement }).__field = assetsRef.current.field;
+        }
       }
     };
     rafRef.current = requestAnimationFrame(loop);

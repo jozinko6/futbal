@@ -13,6 +13,7 @@ import {
   type MatchState,
 } from '@/game/simulation';
 import { clamp, lerp } from '@/game/simulation';
+import { WORLD_H, WORLD_W } from './field';
 
 export interface Camera {
   x: number;
@@ -23,10 +24,12 @@ export function createCamera(): Camera {
   return { x: FIELD_X + FIELD_W / 2, y: FIELD_Y + FIELD_H / 2 };
 }
 
-const WORLD_LEFT = FIELD_X - 16;
-const WORLD_RIGHT = FIELD_X + FIELD_W + 16;
-const WORLD_TOP = FIELD_Y - 12;
-const WORLD_BOTTOM = FIELD_Y + FIELD_H + 12;
+// Allow the camera to roam across the whole world (including the stands) so
+// the crowd and goals are visible at the edges of the viewport during play.
+const WORLD_LEFT = 0;
+const WORLD_RIGHT = WORLD_W;
+const WORLD_TOP = 0;
+const WORLD_BOTTOM = WORLD_H;
 
 export function updateCamera(cam: Camera, state: MatchState, dt: number): void {
   const ball = state.ball;

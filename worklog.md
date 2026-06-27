@@ -195,3 +195,34 @@ Stage Summary:
 - Throw-in/corner: lopta voľná, shield chráni restart tím, hráč prijde a rozohrá.
 - Rohové kopy fungujú (corner s shieldom).
 - 23/23 testov passing, tsc/lint čistý.
+
+---
+Task ID: 10
+Agent: main
+Task: Vizuálne prerobiť ihrisko podľa referenčného obrázku (publikum, banner, pruhy, čiary, bránky)
+
+Work Log:
+- VLM analýza referencie (pitch1.png): farebné publikum v pruhoch, veľký banner text
+  hore, vibrant zelená tráva s výraznými pruhmi, hrubšie biele čiary, viditeľné bránky
+  so sieťou, hnedý bežecký ovál.
+- Prepísal som src/game/render/field.ts:
+  * drawStands(): tmavomodré stánky + farebné publikum v pruhoch (red/yellow/green/blue
+    dots 3×3px) so shimmer jitterom. Publikum na celom svete.
+  * drawBanner(): originálny žltý banner "★ KACANOVSKÁ FIFA ★" v chunky pixel-style
+    písme, opakovaný naprieč hornej tabule (nie SEGA — originálny text).
+  * Vibrant paleta: GRASS_LIGHT #3aa84a, GRASS_DARK #2f9240, hrubšie čiary (lineWidth 3),
+    18 pruhov, sunlit edge highlight.
+  * drawGoal: lepšie viditeľné žrde (5×7) + tmavé pozadie siete pre kontrast.
+  * Track len ako úzky rámik (8px) okolo ihriska — neprepisuje publikum (bugfix).
+- Kamera (camera.ts): clamp rozšírený na celý svet (0..WORLD_W/H) aby bolo publikum
+  viditeľné pri okrajoch (aut/roh/bránka).
+- Pridaný debug hook window.__field pre overenie textúry.
+- Bugfix: drawStands sa volala s chýbajúcim 6. argumentom (TS chyba).
+
+Stage Summary:
+- VLM overil pri rohu ihriska: farebné publikum (áno), žltý KACANOVSKÁ FIFA banner (áno),
+  hnedý track (áno), výrazné zelené pruhy (áno), hrubšie biele čiary (áno), bránka so sieťou (áno).
+- Pri strede hry kamera neukáže okraje (očakávané — ihrisko 1120×640 > viewport 640×360),
+  ale pri aut/roh/bránke je publikum a banner jasne viditeľné.
+- VLM: "lively retro stadium feel similar to Sensible Soccer" — presne podľa referencie.
+- 23/23 testov passing, tsc čistý, lint OK.
