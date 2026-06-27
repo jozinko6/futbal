@@ -1,4 +1,4 @@
-# ⚽ Retro Football Arena
+# ⚽ Kačanovská FIFA
 
 Originálna arkádová futbalová hra inšpirovaná rýchlymi 16-bitovými futbalmi,
 plne hrateľná v desktopovom aj mobilnom prehliadači. Žiadne cudzie assety,
@@ -13,10 +13,13 @@ generované programovo.
   fixed timestep 60 Hz — použiteľná klientom aj autoritatívnym serverom.
 - Rýchla arkádová hrateľnosť: prihrávky, vysoká prihrávka, nabíjanie strely,
   sklzy, držanie lopty, vlastná 2D fyzika lopty (trenie, odraz, výška, žrde).
-- Pravidlá: úvodný výkop, gól, aut, rohový kop, kop od brány, polčas, koniec,
-  pauza, rematch. (Ofsajd v MVP nie je; fauly zjednodušené na cooldown + omráčenie.)
+- Pravidlá: úvodný výkop, gól, aut, rohový kop, kop od brány, **ofsajd**,
+  polčas, koniec, pauza, rematch. Fauly zjednodušené na cooldown + omráčenie.
 - Ovládanie: klávesnica, gamepad aj mobil (virtuálny joystick + tlačidlá,
   landscape, multitouch).
+- **Online multiplayer 1v1** cez internet — autoritatívny Socket.IO server,
+  6-miestny kód miestnosti, lobby, synchronizovaný zápas s client-side
+  prediction a reconciliation.
 - Lokálny 2-hráčovsky režim.
 
 > **Poznámka k prostrediu:** tento repozitár beží v sandboxe ako Next.js 16
@@ -37,6 +40,20 @@ generované programovo.
 bun install            # nainštaluje závislosti
 bun run dev            # spustí Next.js dev server na http://localhost:3000
 ```
+
+### Online multiplayer server
+
+Online 1v1 vyžaduje autoritatívny game server (mini-service):
+
+```bash
+cd mini-services/game-server
+bun install
+bun run dev            # spustí Socket.IO server na porte 3003 (bun --hot)
+```
+
+Server beží na porte 3003. Klient sa k nemu pripája cez Caddy gateway
+(`?XTransformPort=3003`), takže v prehliadači otvor stránku cez Caddy
+(port 81 v sandboxe) — nie priamo `localhost:3000`.
 
 Otvor **Preview Panel** vpravo (alebo `Open in New Tab`). Neotváraj
 `http://localhost:3000` priamo — tá adresa je interná.
@@ -117,22 +134,27 @@ sequence numberom.
 
 ## Online multiplayer (1v1)
 
-Architektúra je pripravená pre autoritatívny Socket.IO server (protokol v
-`src/game/net/protocol.ts`). Server by:
-- bežal na samostatnom porte s vlastným fixed-tick loopom nad
-  `src/game/simulation`,
-- vytváral miestnosti s 6-miestnym kódom,
-- validoval a rate-limitoval vstupy,
-- vysielal full snapshot pri pripojení/resync a delta snapshoty počas hry,
-- dočasne prenechal tím odpojeného hráča AI (grace period),
-- nikdy neveril klientskemu skóre/času/pozíciám.
+Autoritatívny Socket.IO server beží v `mini-services/game-server/` (port 3003).
+Server používa rovnaký deterministický simulačný balík ako klient:
 
-Klient by robil client-side prediction vlastného hráča, reconciliation podľa
-posledného ack-ovaného vstupu a interpoláciu vzdialených entít.
+- vytvára miestnosti s 6-miestnym kódom,
+- validuje a rate-limituje vstupy (sequence number, rozsah),
+- beží fixed-tick loop nad simuláciou,
+- vysiela full snapshoty (~1s) a delta snapshoty (20 Hz),
+- ack-uje posledný spracovaný vstup pre client reconciliation,
+- pri disconnecte prenechá tím AI počas grace period (8 s),
+- nikdy neverí klientskemu skóre/času/pozíciám.
 
-> V jednopoužívateľskom sandboxe nie je reálny 1v1 cez sieť demonštrovateľný;
-> plne hrateľný je **offline zápas vs AI** a **lokálny 2 hráči**. Lobby UI
-  (`LobbyScreen`) generuje kód miestnosti a zobrazuje stav/ping.
+Klient (`src/game/net/client.ts`) posiela iba `InputFrame` so `seq`, beží
+client-side prediction vlastného hráča, reconciliation podľa ack a
+interpoláciu vzdialených entít.
+
+Ako hrať online:
+1. Spusti game server (`mini-services/game-server`).
+2. Otvor hru cez Caddy (port 81 v sandboxe).
+3. Hráč 1: Menu → Online 1v1 → Nová miestnosť → pošli 6-miestny kód.
+4. Hráč 2: v druhom prehliadači/tab → Online 1v1 → zadaj kód → PRIPOJIŤ.
+5. Obaja → SOM PRIPRAVENÝ → zápas sa začne po odpočte.
 
 ---
 
@@ -155,8 +177,8 @@ Pozri [`.env.example`](.env.example) pre všetky premenné.
 
 - **Unit (Vitest):** `bun run test` — pokrýva pohyb lopty pri fixed timestep,
   trenie, cap rýchlosti, odraz, detekciu gólu, crossbar, aut/roh/kop od brány,
-  prepínanie stavov zápasu (výkop→play→polčas→koniec), reset po góle a
-  **determinizmus** (rovnaké vstupy + seed → rovnaký stav).
+  **ofsajd** (3 testy: offside flag, level/behind passer, own half),
+  prepínanie stavov zápasu, reset po góle a **determinizmus**.
 - **E2E (Playwright):** `bun run test:e2e` — otvorenie menu, spustenie
   offline zápasu, ovládanie hráča, pauza/pokračovanie, nastavenia, lobby.
 

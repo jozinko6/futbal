@@ -16,6 +16,9 @@ import {
   BALL_MAX_SPEED,
   kickBall,
   checkFieldEvents,
+  pass,
+  isReceiverOffside,
+  awardOffside,
   type InputFrame,
   type MatchState,
 } from '@/game/simulation';
@@ -278,5 +281,80 @@ describe('determinism', () => {
     }
     expect(a.ball.x).toBe(b.ball.x);
     expect(a.tick).toBe(b.tick);
+  });
+});
+
+describe('offside', () => {
+  it('flags a receiver past the second-last defender as offside', () => {
+    const s = createMatchState({ seed: 42 });
+    s.period = 'play';
+    // Passer near halfway with the ball.
+    const passer = s.players[4]; // home FWD
+    passer.x = FIELD_CX + 10;
+    passer.y = FIELD_CY;
+    passer.hasBall = true;
+    s.ball.ownerId = passer.id;
+    s.ball.x = passer.x;
+    s.ball.y = passer.y;
+    // Receiver deep in the away half.
+    const receiver = s.players[3]; // home MID
+    receiver.x = FIELD_RIGHT - 120;
+    receiver.y = FIELD_CY;
+    // Away non-GK defenders shallow; away GK deep (nearest goal).
+    for (const p of s.players) {
+      if (p.team === 1 && p.role !== 'GK') {
+        p.x = FIELD_CX + 200;
+        p.y = FIELD_CY + 180;
+      }
+    }
+    // Passing records the offside snapshot.
+    pass(passer, receiver.x, receiver.y, s, false);
+    expect(s.offsideCheck).not.toBeNull();
+    // Judge the receiver directly against the snapshot.
+    expect(isReceiverOffside(s, receiver)).toBe(true);
+    // Award -> indirect free kick to the away team at the receiver's spot.
+    awardOffside(s, receiver.x, receiver.y);
+    expect(s.offsides[0]).toBe(1);
+    expect(s.banner).toBe('OFSAJD');
+    expect(s.restartType).toBe('freeKick');
+    expect(s.restartTeam).toBe(1);
+    // The check is consumed after the award.
+    expect(s.offsideCheck).toBeNull();
+  });
+
+  it('does NOT flag a receiver level with or behind the passer', () => {
+    const s = createMatchState({ seed: 43 });
+    s.period = 'play';
+    const passer = s.players[4];
+    passer.x = FIELD_CX + 10;
+    passer.y = FIELD_CY;
+    passer.hasBall = true;
+    s.ball.ownerId = passer.id;
+    const receiver = s.players[3];
+    receiver.x = FIELD_CX + 5; // behind the passer
+    receiver.y = FIELD_CY;
+    for (const p of s.players) {
+      if (p.team === 1 && p.role !== 'GK') {
+        p.x = FIELD_CX + 300;
+        p.y = FIELD_CY;
+      }
+    }
+    pass(passer, receiver.x, receiver.y, s, false);
+    expect(isReceiverOffside(s, receiver)).toBe(false);
+  });
+
+  it('does NOT flag a receiver in their own half', () => {
+    const s = createMatchState({ seed: 44 });
+    s.period = 'play';
+    const passer = s.players[4];
+    passer.x = FIELD_CX - 20; // passer in own half
+    passer.y = FIELD_CY;
+    passer.hasBall = true;
+    s.ball.ownerId = passer.id;
+    const receiver = s.players[3];
+    receiver.x = FIELD_CX - 60; // receiver also in own half
+    receiver.y = FIELD_CY;
+    pass(passer, receiver.x, receiver.y, s, false);
+    expect(isReceiverOffside(s, receiver)).toBe(false);
   });
 });

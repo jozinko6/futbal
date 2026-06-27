@@ -99,3 +99,54 @@ Stage Summary:
 - `bun run lint` / `bun run typecheck` / `bun run test` / `bun run test:e2e` definované.
 - Produkčné artefakty (Docker, Render, env) pripravené.
 - Dokumentácia kompletná.
+
+---
+Task ID: 8
+Agent: main
+Task: Pridať ofsajd, zväčšiť ihrisko, premenovať na Kačanovská FIFA, funkčný online multiplayer
+
+Work Log:
+- Premenovanie: "Retro Football Arena" → "Kačanovská FIFA" vo všetkých súboroch (UI, README, docs,
+  metadata v layout.tsx, Logo komponent, footer).
+- Zväčšené ihrisko: FIELD_W 848→1120, FIELD_H 472→640, WORLD 960×560→1232×728, penalty box
+  96×232→132×300, goal area 44×132→56×176, center circle 66→84, GOAL_H 132→148. Formácie
+  rozšírené pre väčší rozostup. Kamera a renderer automaticky adaptované (konštanty-driven).
+- Ofsajd (OFFSIDE_ENABLED): pri pass() sa zaznamená snapshot pozícií všetkých hráčov.
+  isReceiverOffside() kontroluje: prijímateľ v súperovej polovici, za second-last defenderom
+  (okrem GK) o viac ako OFFSIDE_TOLERANCE, a nie na úrovni/za prihrávajúcim. awardOffside()
+  → indirect free kick (freeKick reštart) pre brániaci tím + banner OFSAJD + počítadlo.
+  Cleanup pri goal/stoppage/kickoff/súper získa loptu. Pridané polia do MatchState
+  (offsideCheck, offsides[2]).
+- Online multiplayer (autoritatívny):
+  * mini-services/game-server/ (Socket.IO, port 3003, path /): rooms s 6-miestnym kódom,
+    createRoom/joinRoom/setReady/selectTeam/input/rematch/leaveRoom/ping, fixed-tick loop
+    (setInterval FIXED_DT), validácia vstupov (seq, rozsah), periodické snapshoty (full ~1s,
+    delta inak), ack sekvencií, matchStart s controllerIndex, countdown, grace period pre
+    disconnect (AI dočasne prevezme), matchEnd.
+  * src/game/net/client.ts (NetClient): pripojenie cez io('/?XTransformPort=3003') (Caddy
+    gateway), sendInput (rate-limited, seq), predictStep (client-side prediction),
+    reconciliation (replay unacked inputs), interpolatedState, lobby/match callbacks.
+  * OnlineLobby.tsx: setup (create/join), lobby UI (kód, hráči, ready, ping, countdown),
+    auto-štart keď obaja ready.
+  * OnlineMatch.tsx: match loop renderuje stav zo servera, posiela inputs, predikcia,
+    pauza/rematch/quit.
+  * GameContainer: 'online_lobby'/'online_match' scény, net state (nie ref — lint),
+    resultsOnline flag pre online-aware results/rematch.
+- Testy: 20/20 Vitest (pridané 3 ofsajd unit testy: offside flag, level/behind passer,
+  own half). tsc čistý, lint OK.
+- Verifikácia v browseri cez Caddy (port 81) + agent-browser (2 sessions):
+  * Menu ukazuje "KACANOVSKÁ FIFA" + Online 1v1 tlačidlo (VLM potvrdené).
+  * Offline zápas: väčšie ihrisko (VLM: "large pitch"), scoreboard, offsides počítadlá.
+  * Online: P1 vytvoril miestnosť (kód 657631), P2 sa pripojil kódom, lobby 2/2,
+    obaja ready → zápas začal na oboch klientoch (period=play), synchronizácia overená
+    (hráč id=3 rovnaká pozícia x=587 y=364 na oboch).
+
+Stage Summary:
+- Ofsajd plne funkčný (detekcia + indirect free kick + banner + počítadlá).
+- Ihrisko zväčšené (1120×640 hrateľná plocha, svet 1232×728).
+- Hra premenovaná na Kačanovská FIFA.
+- Online 1v1 cez internet funguje: autoritatívny Socket.IO server (mini-service 3003),
+  6-miestny kód, lobby, synchronizovaný odpočet, prediction/reconciliation, snapshot sync,
+  pauza/rematch. Verifikované s dvoma browser sessions.
+- Server sa spúšťa: cd mini-services/game-server && bun run dev (na pozadí beží).
+- Dokumentácia aktualizovaná (README, docs/PROGRESS.md, docs/ARCHITECTURE.md).

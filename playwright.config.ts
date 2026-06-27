@@ -23,10 +23,18 @@ export default defineConfig({
       use: { ...devices['Pixel 5'], viewport: { width: 740, height: 360 } },
     },
   ],
-  webServer: {
-    command: 'bun run dev',
-    url: 'http://localhost:3000',
-    reuseExistingServer: true,
-    timeout: 120_000,
-  },
+  webServer: [
+    {
+      command: 'bun run dev',
+      url: 'http://localhost:3000',
+      reuseExistingServer: true,
+      timeout: 120_000,
+    },
+    {
+      command: 'cd mini-services/game-server && bun run dev',
+      url: 'http://localhost:3003',
+      reuseExistingServer: true,
+      timeout: 120_000,
+    },
+  ],
 });

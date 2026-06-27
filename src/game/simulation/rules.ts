@@ -17,9 +17,12 @@ import {
   GOAL_H,
   GOAL_TOP,
   KICKOFF_DELAY,
+  OFFSIDE_BANNER,
+  OFFSIDE_ENABLED,
+  OFFSIDE_TOLERANCE,
   RESTART_SETUP_TIME,
 } from './constants';
-import type { MatchState, RestartType, Team } from './types';
+import type { MatchState, PlayerEntity, RestartType, Team } from './types';
 import { resetToFormation } from './formation';
 
 export type FieldEvent =
@@ -149,6 +152,13 @@ export function setupRestart(state: MatchState, type: RestartType, team: Team): 
       ball.y = Math.max(FIELD_TOP + 2, Math.min(FIELD_BOTTOM - 2, ball.y));
       break;
     }
+    case 'freeKick': {
+      // Indirect free kick (e.g. for offside). Ball placed at the offence
+      // spot; callers set ball.x/y before invoking.
+      ball.x = Math.max(FIELD_X + 2, Math.min(FIELD_RIGHT - 2, ball.x));
+      ball.y = Math.max(FIELD_TOP + 2, Math.min(FIELD_BOTTOM - 2, ball.y));
+      break;
+    }
     case null:
       break;
   }
@@ -163,6 +173,7 @@ export function setupKickoff(state: MatchState, team: Team): void {
   state.period = 'kickoff';
   state.banner = 'VÝKOP';
   state.bannerTimer = KICKOFF_DELAY;
+  state.offsideCheck = null;
   setupRestart(state, 'kickoff', team);
 }
 
@@ -174,6 +185,7 @@ export function awardGoal(state: MatchState, team: Team): void {
   state.restartTimer = GOAL_CELEBRATION_TIME;
   state.banner = 'GÓL!';
   state.bannerTimer = GOAL_CELEBRATION_TIME;
+  state.offsideCheck = null;
   // Mark scorers as celebrating briefly.
   for (const p of state.players) {
     if (p.team === team) p.state = 'celebrate';
@@ -193,4 +205,69 @@ export function advancePeriod(state: MatchState): void {
     // Stays fulltime — the UI layer shows results.
     return;
   }
+}
+
+// --- Offside ---------------------------------------------------------------
+
+/**
+ * Was `receiver` in an offside position at the instant of the pass recorded
+ * in `state.offsideCheck`?
+ *
+ * Offside (simplified, no passive interference): the receiver is offside if,
+ * at the moment of the pass, they were in the opponent's half AND nearer the
+ * opponent's goal line than the second-last defender (excluding the GK) by
+ * more than OFFSIDE_TOLERANCE. A receiver level with or behind the passer is
+ * never offside.
+ */
+export function isReceiverOffside(state: MatchState, receiver: PlayerEntity): boolean {
+  if (!OFFSIDE_ENABLED) return false;
+  const check = state.offsideCheck;
+  if (!check) return false;
+  if (receiver.team !== check.passerTeam) return false;
+
+  const pos = check.positions.find((p) => p.id === receiver.id);
+  if (!pos) return false;
+
+  // Receiver must be in the opponent's half.
+  const inOppHalf =
+    receiver.team === 0 ? pos.x > FIELD_CX : pos.x < FIELD_CX;
+  if (!inOppHalf) return false;
+
+  // Level with or behind the passer -> onside.
+  const behindPasser =
+    receiver.team === 0 ? pos.x <= check.passerX : pos.x >= check.passerX;
+  if (behindPasser) return false;
+
+  // Second-last defender of the opposing team (exclude the GK).
+  const opp: Team = (1 - receiver.team) as Team;
+  const defenderXs = check.positions
+    .filter((p) => p.team === opp)
+    .map((p) => p.x)
+    .sort((a, b) => (receiver.team === 0 ? b - a : a - b)); // nearest goal first
+  // The GK is usually the nearest; the second element is the second-last.
+  const secondLast = defenderXs.length >= 2 ? defenderXs[1] : defenderXs[0];
+  if (secondLast == null) return false;
+
+  const nearer =
+    receiver.team === 0
+      ? pos.x > secondLast + OFFSIDE_TOLERANCE
+      : pos.x < secondLast - OFFSIDE_TOLERANCE;
+  return nearer;
+}
+
+/** Award an offside: indirect free kick to the defending team at the spot. */
+export function awardOffside(state: MatchState, spotX: number, spotY: number): void {
+  if (!state.offsideCheck) return;
+  const defendingTeam: Team = (1 - state.offsideCheck.passerTeam) as Team;
+  state.offsides[state.offsideCheck.passerTeam]++;
+  state.ball.x = spotX;
+  state.ball.y = spotY;
+  state.ball.vx = 0;
+  state.ball.vy = 0;
+  state.ball.vz = 0;
+  state.ball.z = 0;
+  state.offsideCheck = null;
+  setupRestart(state, 'freeKick', defendingTeam);
+  state.banner = OFFSIDE_BANNER;
+  state.bannerTimer = 1.4;
 }

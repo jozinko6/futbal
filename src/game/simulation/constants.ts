@@ -1,5 +1,5 @@
 /**
- * Retro Football Arena — core simulation constants.
+ * Kačanovská FIFA — core simulation constants.
  *
  * Everything here is pure data (no DOM, no Canvas, no Phaser) so the same
  * module can run on the client (for prediction) and on an authoritative
@@ -23,8 +23,8 @@ export const MAX_FRAME_ACCUM = 0.25;
 export const FIELD_X = 56;
 export const FIELD_Y = 44;
 /** Playable field size (larger than the 640x360 viewport). */
-export const FIELD_W = 848;
-export const FIELD_H = 472;
+export const FIELD_W = 1120;
+export const FIELD_H = 640;
 
 /** Top boundary of the playable field (alias of FIELD_Y). */
 export const FIELD_TOP = FIELD_Y;
@@ -34,22 +34,34 @@ export const FIELD_CX = FIELD_X + FIELD_W / 2;
 export const FIELD_CY = FIELD_Y + FIELD_H / 2;
 
 /** Goal mouth height (distance between posts). */
-export const GOAL_H = 132;
+export const GOAL_H = 148;
 export const GOAL_TOP = FIELD_CY - GOAL_H / 2;
 export const GOAL_BOTTOM = FIELD_CY + GOAL_H / 2;
 /** Depth of the goal box behind the goal line. */
-export const GOAL_DEPTH = 26;
+export const GOAL_DEPTH = 28;
 /** Cross-bar height — ball must be below this to score. */
 export const CROSSBAR_Z = 34;
 
 /** Penalty box dimensions. */
-export const PENALTY_BOX_W = 96;
-export const PENALTY_BOX_H = 232;
+export const PENALTY_BOX_W = 132;
+export const PENALTY_BOX_H = 300;
 /** Goal area (small box) dimensions. */
-export const GOAL_AREA_W = 44;
-export const GOAL_AREA_H = 132;
+export const GOAL_AREA_W = 56;
+export const GOAL_AREA_H = 176;
 
-export const CENTER_CIRCLE_R = 66;
+export const CENTER_CIRCLE_R = 84;
+
+// --- Offside -----------------------------------------------------------
+
+/** Master toggle for the offside rule. */
+export const OFFSIDE_ENABLED = true;
+/** A receiver is offside if, at the moment of the pass, they are in the
+ *  opponent's half and nearer the goal line than the second-last defender
+ *  by more than this tolerance (px). */
+export const OFFSIDE_TOLERANCE = 6;
+/** When an offside is detected, the restart is an indirect free kick for the
+ *  defending team at the offside position. */
+export const OFFSIDE_BANNER = 'OFSAJD';
 
 // --- Players ------------------------------------------------------------
 

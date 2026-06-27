@@ -1,5 +1,5 @@
 /**
- * Retro Football Arena — deterministic simulation entry point.
+ * Kačanovská FIFA — deterministic simulation entry point.
  *
  * `step(state, input, dt)` advances the match by one fixed timestep. It is
  * pure with respect to external state (no DOM/Canvas) and uses a seeded RNG,
@@ -28,7 +28,7 @@ import {
 import type { HumanController, InputFrame, MatchState, Team } from './types';
 import { hashSeed, rngCreate } from './rng';
 import { buildPlayers, resetToFormation, teamOf } from './formation';
-import { setupKickoff, setupRestart, awardGoal, checkFieldEvents, resolveGoalPosts } from './rules';
+import { setupKickoff, setupRestart, awardGoal, awardOffside, checkFieldEvents, isReceiverOffside, resolveGoalPosts } from './rules';
 import { applyMovement, dribble, integratePlayer, resolvePlayerCollision, resolvePossession, shoot, pass, startTackle, tryTackle } from './player';
 import { integrateBall } from './ball';
 import { aiAct } from './ai';
@@ -106,6 +106,8 @@ export function createMatchState(opts: CreateMatchOptions = {}): MatchState {
     lastGoalTeam: null,
     banner: 'VÝKOP',
     bannerTimer: 1.2,
+    offsideCheck: null,
+    offsides: [0, 0],
   };
   resetToFormation(state.players);
   setupKickoff(state, 0 as Team);
@@ -323,6 +325,9 @@ function processFieldEvents(state: MatchState): void {
   const ev = checkFieldEvents(state);
   if (ev.type === 'none') return;
 
+  // Any stoppage invalidates a pending offside check.
+  state.offsideCheck = null;
+
   if (ev.type === 'goal') {
     awardGoal(state, ev.team);
     return;
@@ -435,9 +440,28 @@ export function stepMulti(state: MatchState, inputs: InputFrame[], dt: number): 
     }
 
     // 6. Possession, posts, last touch.
+    const prevOwner = state.ball.ownerId;
     resolvePossession(state);
     resolveGoalPosts(state);
     trackLastTouch(state);
+
+    // 6b. Offside — judged when a NEW teammate gains the ball from a pass.
+    if (state.offsideCheck && state.ball.ownerId != null && state.ball.ownerId !== prevOwner) {
+      const receiver = state.players[state.ball.ownerId];
+      if (!receiver) {
+        state.offsideCheck = null;
+      } else if (receiver.team !== state.offsideCheck.passerTeam) {
+        // Opponent won the ball — pass broken up, no offside possible.
+        state.offsideCheck = null;
+      } else if (receiver.id !== state.offsideCheck.passerId) {
+        // Teammate received — judge offside against the pass snapshot.
+        if (isReceiverOffside(state, receiver)) {
+          awardOffside(state, receiver.x, receiver.y);
+        } else {
+          state.offsideCheck = null;
+        }
+      }
+    }
 
     // 7. Field events / restarts / goals.
     processFieldEvents(state);

@@ -1,5 +1,5 @@
 /**
- * Retro Football Arena — simulation type definitions.
+ * Kačanovská FIFA — simulation type definitions.
  *
  * Pure data shapes — no DOM/Canvas/Phaser references. Shared by client and
  * authoritative server.
@@ -100,7 +100,7 @@ export type MatchPeriod =
   | 'extratime'
   | 'penalties';
 
-export type RestartType = 'kickoff' | 'goalKick' | 'corner' | 'throwIn' | null;
+export type RestartType = 'kickoff' | 'goalKick' | 'corner' | 'throwIn' | 'freeKick' | null;
 
 /**
  * A human-controlled slot. Solo play uses one controller (team 0); local 2P
@@ -153,6 +153,20 @@ export interface MatchState {
   /** Pending message for HUD (e.g. "GOAL!", "HALF TIME"). */
   banner: string;
   bannerTimer: number;
+  /**
+   * Pending offside check set at the moment of a pass. Cleared once the ball
+   * is touched by anyone (the receiver is judged offside / onside then) or
+   * when play stops for any other reason.
+   */
+  offsideCheck: {
+    passerTeam: Team;
+    passerId: number;
+    passerX: number;
+    /** Player positions at the instant of the pass, keyed by id. */
+    positions: Array<{ id: number; team: Team; x: number; y: number }>;
+  } | null;
+  /** Total offside count per team (for the HUD / stats). */
+  offsides: [number, number];
 }
 
 /** A single timestamped input frame from the human client. */

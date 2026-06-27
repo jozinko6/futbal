@@ -14,24 +14,24 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Z.ai Code Scaffold - AI-Powered Development",
-  description: "Modern Next.js scaffold optimized for AI-powered development with Z.ai. Built with TypeScript, Tailwind CSS, and shadcn/ui.",
-  keywords: ["Z.ai", "Next.js", "TypeScript", "Tailwind CSS", "shadcn/ui", "AI development", "React"],
-  authors: [{ name: "Z.ai Team" }],
+  title: "Kačanovská FIFA — arkádový futbal",
+  description: "Originálna arkádová futbalová hra inšpirovaná rýchlymi 16-bitovými futbalmi. 5 vs 5, pixel-art, deterministická simulácia, online multiplayer.",
+  keywords: ["Kačanovská FIFA", "futbal", "arkáda", "pixel-art", "multiplayer", "Next.js", "TypeScript"],
+  authors: [{ name: "Kačanovská FIFA" }],
   icons: {
     icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
   },
   openGraph: {
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
+    title: "Kačanovská FIFA",
+    description: "Originálna arkádová futbalová hra s online multiplayerom",
     url: "https://chat.z.ai",
-    siteName: "Z.ai",
+    siteName: "Kačanovská FIFA",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
+    title: "Kačanovská FIFA",
+    description: "Originálna arkádová futbalová hra s online multiplayerom",
   },
 };
 

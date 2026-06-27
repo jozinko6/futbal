@@ -1,4 +1,4 @@
-# Architektúra — Retro Football Arena
+# Architektúra — Kačanovská FIFA
 
 ## Prehľad
 

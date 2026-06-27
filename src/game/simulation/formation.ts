@@ -19,25 +19,15 @@ export interface FormationSlot {
 }
 
 /**
- * Home-team formation slots expressed as fractions of the home half, then
- * mirrored for the away team. Home occupies the left half.
+ * Formation slots for the home team (attacks to the right). Mirrored across
+ * the halfway line for the away team. Spread across the enlarged pitch.
  */
-const HOME_FORMATION: FormationSlot[] = [
-  { role: 'GK', x: FIELD_X + 38, y: FIELD_CY },
-  { role: 'DEF', x: FIELD_X + 190, y: FIELD_CY - 92 },
-  { role: 'DEF', x: FIELD_X + 190, y: FIELD_CY + 92 },
-  { role: 'MID', x: FIELD_X + 360, y: FIELD_CY },
-  { role: 'FWD', x: FIELD_X + 360, y: FIELD_CY - 120 },
-  // (5th slot uses the FWD above; see mapping below)
-];
-
-// We need exactly PLAYERS_PER_TEAM slots. Re-map to ensure 5 distinct roles.
 const FORMATION_SLOTS: FormationSlot[] = [
-  { role: 'GK', x: FIELD_X + 38, y: FIELD_CY },
-  { role: 'DEF', x: FIELD_X + 190, y: FIELD_CY - 92 },
-  { role: 'DEF', x: FIELD_X + 190, y: FIELD_CY + 92 },
-  { role: 'MID', x: FIELD_X + 360, y: FIELD_CY },
-  { role: 'FWD', x: FIELD_X + 560, y: FIELD_CY },
+  { role: 'GK', x: FIELD_X + 48, y: FIELD_CY },
+  { role: 'DEF', x: FIELD_X + 300, y: FIELD_CY - 160 },
+  { role: 'DEF', x: FIELD_X + 300, y: FIELD_CY + 160 },
+  { role: 'MID', x: FIELD_X + 520, y: FIELD_CY },
+  { role: 'FWD', x: FIELD_X + 520, y: FIELD_CY - 200 },
 ];
 
 /** Returns the formation home position for a player, mirrored for away. */

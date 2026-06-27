@@ -57,13 +57,13 @@ export function Logo() {
         className="font-mono font-black uppercase leading-none text-amber-300"
         style={{ fontSize: 'clamp(2rem, 7vw, 4.5rem)', textShadow: '4px 4px 0 #064e3b, 8px 8px 0 rgba(0,0,0,0.4)' }}
       >
-        Retro Football
+        Kačanovská
       </h1>
       <h2
         className="font-mono font-bold uppercase tracking-[0.4em] text-emerald-300 mt-1"
         style={{ fontSize: 'clamp(0.9rem, 2.5vw, 1.5rem)' }}
       >
-        Arena
+        FIFA
       </h2>
     </div>
   );
@@ -72,11 +72,12 @@ export function Logo() {
 interface MenuProps {
   onPlay: () => void;
   onLocal2P: () => void;
+  onOnline: () => void;
   onSettings: () => void;
   onHowTo: () => void;
 }
 
-export function MenuScreen({ onPlay, onLocal2P, onSettings, onHowTo }: MenuProps) {
+export function MenuScreen({ onPlay, onLocal2P, onOnline, onSettings, onHowTo }: MenuProps) {
   return (
     <div className="flex flex-1 flex-col items-center overflow-y-auto">
       <div className="m-auto flex w-full max-w-sm flex-col items-center gap-4 p-4">
@@ -87,6 +88,9 @@ export function MenuScreen({ onPlay, onLocal2P, onSettings, onHowTo }: MenuProps
           </RetroButton>
           <RetroButton onClick={onLocal2P} className="w-full">
             👥 Lokálny 2 hráči
+          </RetroButton>
+          <RetroButton onClick={onOnline} className="w-full">
+            🌐 Online 1v1
           </RetroButton>
           <RetroButton variant="ghost" onClick={onHowTo} className="w-full">
             Ako hrať

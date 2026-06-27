@@ -111,3 +111,38 @@ test.describe('Retro Football Arena', () => {
     expect(after).not.toBe(before);
   });
 });
+
+test.describe('online multiplayer', () => {
+  test('create room and join from a second client', async ({ browser }) => {
+    // Online requires the Caddy gateway (port 81) so XTransformPort routing
+    // forwards socket.io to the game server on 3003.
+    const ctx1 = await browser.newContext();
+    const ctx2 = await browser.newContext();
+    const p1 = await ctx1.newPage();
+    const p2 = await ctx2.newPage();
+
+    await p1.goto('http://localhost:81');
+    await p1.getByRole('button', { name: /online 1v1/i }).click();
+    await p1.getByRole('button', { name: /nová miestnosť/i }).click();
+    // Wait for the 6-digit room code to appear.
+    await p1.waitForFunction(() => /KÓD MIESTNOSTI/.test(document.body.innerText), { timeout: 8000 });
+    const code = await p1.evaluate(() => {
+      const m = document.body.innerText.match(/\b(\d{6})\b/);
+      return m ? m[1] : '';
+    });
+    expect(code).toMatch(/^\d{6}$/);
+
+    // Second client joins with the code.
+    await p2.goto('http://localhost:81');
+    await p2.getByRole('button', { name: /online 1v1/i }).click();
+    await p2.getByRole('textbox').fill(code);
+    await p2.getByRole('button', { name: /pripojiť/i }).click();
+
+    // Both lobbies should report 2/2 players.
+    await p1.waitForFunction(() => /2\/2/.test(document.body.innerText), { timeout: 8000 });
+    await p2.waitForFunction(() => /2\/2/.test(document.body.innerText), { timeout: 8000 });
+
+    await ctx1.close();
+    await ctx2.close();
+  });
+});

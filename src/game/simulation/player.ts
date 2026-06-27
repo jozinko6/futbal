@@ -219,6 +219,14 @@ export function pass(
   passer.state = 'pass';
   passer.actionLock = 0.18;
   passer.facing = angleTo(passer.x, passer.y, targetX, targetY);
+  // Record the offside snapshot at the instant of the pass. A receiver is
+  // judged against the positions captured here, not their later position.
+  state.offsideCheck = {
+    passerTeam: passer.team,
+    passerId: passer.id,
+    passerX: passer.x,
+    positions: state.players.map((p) => ({ id: p.id, team: p.team, x: p.x, y: p.y })),
+  };
 }
 
 /** Shoot toward a target with charged power [0..1]. */

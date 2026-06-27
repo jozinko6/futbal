@@ -24,8 +24,8 @@ import {
   PENALTY_BOX_W,
 } from '@/game/simulation';
 
-export const WORLD_W = 960;
-export const WORLD_H = 560;
+export const WORLD_W = 1232;
+export const WORLD_H = 728;
 
 /** Create the static pitch texture (call once, in the browser). */
 export function createFieldTexture(): HTMLCanvasElement {

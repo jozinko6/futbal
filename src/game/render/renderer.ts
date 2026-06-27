@@ -1,5 +1,5 @@
 /**
- * Canvas renderer for Retro Football Arena.
+ * Canvas renderer for Kačanovská FIFA.
  *
  * Browser-only (uses Canvas 2D). Draws the pre-rendered field texture, then
  * shadows, players, ball and HUD on top. Pixel-perfect: all coordinates are

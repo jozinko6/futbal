@@ -16,6 +16,9 @@ import { render, type RenderAssets } from '@/game/render/renderer';
 import { InputManager, P2_KEYS, P1_KEYS, type TouchState } from '@/game/input/InputManager';
 import { getSound } from '@/game/audio/Sound';
 import { TouchControls } from './TouchControls';
+import { OnlineLobby, type OnlineConfig } from './OnlineLobby';
+import { OnlineMatch } from './OnlineMatch';
+import { NetClient } from '@/game/net/client';
 import {
   HowToScreen,
   LobbyScreen,
@@ -50,7 +53,16 @@ function handleSoundEvents(
   }
 }
 
-type Scene = 'menu' | 'teamselect' | 'howto' | 'settings' | 'lobby' | 'match' | 'results';
+type Scene =
+  | 'menu'
+  | 'teamselect'
+  | 'howto'
+  | 'settings'
+  | 'lobby'
+  | 'match'
+  | 'online_lobby'
+  | 'online_match'
+  | 'results';
 
 const DEFAULT_CONFIG: MatchConfig = {
   mode: 'solo',
@@ -86,6 +98,14 @@ export function GameContainer() {
   const [paused, setPaused] = useState(false);
   const [finalScore, setFinalScore] = useState<[number, number]>([0, 0]);
   const [matchKey, setMatchKey] = useState(0);
+  const [resultsOnline, setResultsOnline] = useState(false);
+  const [net, setNet] = useState<NetClient | null>(null);
+  const [onlineConfig, setOnlineConfig] = useState<OnlineConfig>({
+    difficulty: 'normal',
+    halfLength: 120,
+    team: 0 as Team,
+    name: '',
+  });
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -272,6 +292,21 @@ export function GameContainer() {
     input1Ref.current?.setTouch(t);
   }, []);
 
+  // --- Online lifecycle helpers ---
+  const enterOnline = useCallback(() => {
+    if (!net) setNet(new NetClient());
+    setScene('online_lobby');
+  }, [net]);
+
+  const quitOnline = useCallback(() => {
+    if (net) {
+      net.leaveRoom();
+      net.destroy();
+    }
+    setNet(null);
+    setScene('menu');
+  }, [net]);
+
   // --- Render ---
   return (
     <div
@@ -288,6 +323,7 @@ export function GameContainer() {
             setConfig((c) => ({ ...c, mode: '2p' }));
             setScene('teamselect');
           }}
+          onOnline={enterOnline}
           onSettings={() => setScene('settings')}
           onHowTo={() => setScene('howto')}
         />
@@ -347,21 +383,53 @@ export function GameContainer() {
         </div>
       )}
 
+      {scene === 'online_lobby' && net && (
+        <OnlineLobby
+          net={net}
+          config={onlineConfig}
+          onMatchStart={() => setScene('online_match')}
+          onLeave={quitOnline}
+        />
+      )}
+
+      {scene === 'online_match' && net && (
+        <OnlineMatch
+          net={net}
+          settings={settings}
+          onSettingsChange={setSettings}
+          onQuit={quitOnline}
+          onMatchEnd={(score) => {
+            setFinalScore(score);
+            setResultsOnline(true);
+            setScene('results');
+          }}
+        />
+      )}
+
       {scene === 'results' && (
         <ResultsScreen
           score={finalScore}
           halfLength={config.halfLength}
           onRematch={() => {
-            setMatchKey((k) => k + 1);
-            setScene('match');
+            if (resultsOnline) {
+              net?.rematch();
+              setScene('online_lobby');
+            } else {
+              setMatchKey((k) => k + 1);
+              setScene('match');
+            }
           }}
-          onMenu={() => setScene('menu')}
+          onMenu={() => {
+            if (resultsOnline) quitOnline();
+            else setScene('menu');
+            setResultsOnline(false);
+          }}
         />
       )}
 
       {/* Sticky footer */}
       <footer className="mt-auto w-full border-t border-emerald-800/60 bg-emerald-950/80 py-2 text-center font-mono text-[10px] text-emerald-400/60">
-        Retro Football Arena · originálna arkáda · 5 vs 5 · deterministická simulácia
+        Kačanovská FIFA · originálna arkáda · 5 vs 5 · deterministická simulácia
       </footer>
     </div>
   );

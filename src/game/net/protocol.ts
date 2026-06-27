@@ -1,5 +1,5 @@
 /**
- * Retro Football Arena — online multiplayer protocol.
+ * Kačanovská FIFA — online multiplayer protocol.
  *
  * Architecture: an authoritative Node.js + Socket.IO server runs the
  * deterministic simulation from `@/game/simulation`. Clients send ONLY
