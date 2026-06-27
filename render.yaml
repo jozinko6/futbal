@@ -1,0 +1,26 @@
+# Render deployment config for Retro Football Arena.
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: retro-football-arena
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install -g bun && bun install && npx next build
+    startCommand: node .next/standalone/server.js
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+      - key: PORT
+        value: "3000"
+      # Optional authoritative game server (separate service). When set, the
+      # client connects to this URL for online 1v1 matches.
+      - key: NEXT_PUBLIC_GAME_SERVER_URL
+        sync: false
+      # Runtime secret for signing room codes / sessions.
+      - key: GAME_SERVER_SECRET
+        generateValue: true
