@@ -1,78 +1,91 @@
-# Progress — Kačanovská FIFA
+# PROGRESS — Kačanovská FIFA Rework
 
-Stav etáp podľa zadania. Po každej etape: typecheck + unit testy + oprava chýb + update tohto súboru.
+## Etapa 0 — Audit ✅
+- **Dokončené**: audit, `docs/REWORK_PLAN.md`, `docs/BASELINE.md`.
+- **Súbory**: docs/REWORK_PLAN.md, docs/BASELINE.md.
+- **Testy**: 34/34 passing, tsc/lint/build zelené.
+- **Známe nedostatky**: 67 deps, lopta prilepená, 1e6 ciele, žiadny action systém.
+- **Ďalší krok**: Etapa 1 — odľahčenie.
 
-## Etapa 1 — Inicializácia, konfigurácia, dokumentácia ✅
-- Adresárová štruktúra: `src/game/{simulation,render,audio,input,net}`,
-  `src/components/game`, `docs`, `tests/e2e`.
-- TypeScript strict, path alias `@/`, ESLint (Next config), Vitest.
-- `README.md`, `docs/ARCHITECTURE.md`, `docs/PROGRESS.md`.
+## Etapa 1 — Odľahčenie ✅
+- **Dokončené**: odstránených 56 nepoužitých deps, 45 UI komponentov, Prisma, API route.
+- **Súbory**: package.json, src/components/ui/*, src/app/layout.tsx, components.json, .env.example.
+- **Testy**: 34/34, tsc/lint/build zelené.
+- **Ďalší krok**: Etapa 2 — action systém.
 
-## Etapa 2 — Čistá offline simulácia ✅
-- `src/game/simulation/`: constants, types, rng (mulberry32), input, math,
-  ball, formation, player, rules, ai, simulation.
-- Fyzika lopty (trenie, gravitacia, odraz, cap, žrde), hráči (stavový automat,
-  sklz, dribling, prihrávka, strela s nabíjaním, brankársky zákrok), AI
-  (stavový automat s reakčnou latenciou podľa náročnosti, seeded RNG),
-  pravidlá (gól, aut, roh, kop od brány, výkop, polčas, koniec, oslava).
-- Fixed timestep 60 Hz, deterministické (žiadne Math.random).
-- 17 Vitest unit testov — all passing.
+## Etapa 2 — Action systém ✅
+- **Dokončené**: PlayerAction (windup/contact/recovery), kontaktný tick, executePassKick/executeShotKick.
+- **Súbory**: src/game/simulation/actionSystem.ts (nový), types.ts, player.ts, simulation.ts.
+- **Testy**: 34/34.
+- **Ďalší krok**: Etapa 3 — pohyb/stamina.
 
-## Etapa 3 — Phaser/Canvas rendering, ovládanie, kamera, HUD ✅
-- Canvas renderer (pixel-art), pre-renderovaná textúra ihriska, kamera
-  sledujúca akciu, HUD (skóre, čas, banner, charge bar, ukazovateľ
-  aktívneho hráča), integer scaling, nearest-neighbor.
-- InputManager (klávesnica + gamepad + touch), TouchControls (multitouch).
+## Etapa 3 — Pohyb + stamina ✅
+- **Dokončené**: STAMINA config, fatigue blokuje šprint, sharp turn penalty, separátne smery.
+- **Súbory**: tacticsConfig.ts, constants.ts, player.ts, formation.ts.
+- **Testy**: 34/34.
+- **Ďalší krok**: Etapa 4 — dribling.
 
-## Etapa 4 — AI, brankár, pravidlá, lokálny multiplayer ✅
-- AI stavový automat: returnToFormation, support, runToSpace, mark, press,
-  receive, shoot, pass, dribble, gkPosition, gkCharge, gkDive.
-- Brankár: postavenie na čiare, výbeh, zákrok/pad podľa predikcie strely.
-- Pravidlá: výkop, gól, aut, roh, kop od brány, **ofsajd** (indirect free kick),
-  polčas, koniec, pauza, rematch. Fauly → cooldown + omráčenie.
-- Lokálny 2-hráčovsky režim (controller-based model).
+## Etapa 4 — Dribling ✅
+- **Dokončené**: impulzy namiesto interpolácie, touch interval podľa rýchlosti, šprint ľahšie odoberateľné.
+- **Súbory**: player.ts.
+- **Testy**: 34/34.
+- **Ďalší krok**: Etapa 5 — first touch.
 
-## Etapa 5 — Socket.IO server, miestnosti, autoritatívna simulácia ✅
-- `src/game/net/protocol.ts`: ClientToServer / ServerToClient messages,
-  LobbyState, AuthoritativeMatch, validácia vstupov (seq, rozsah),
-  buildDelta (delta snapshot).
-- **`mini-services/game-server/`** — autoritatívny Socket.IO server (port 3003,
-  path `/`, `bun --hot`): rooms s 6-miestnym kódom, fixed-tick loop nad
-  `src/game/simulation`, validácia vstupov, periodické + delta snapshoty,
-  ack sekvencií, grace period pre disconnect (AI prevezme tím), matchEnd.
-- **`src/game/net/client.ts`** (NetClient): pripojenie cez `io('/?XTransformPort=3003')`,
-  sendInput (rate-limited, seq), predictStep (client-side prediction),
-  reconciliation (replay unacked inputs), lobby/match callbacks.
-- Online UI: OnlineLobby (create/join/ready/countdown/ping), OnlineMatch
-  (render server state, send inputs, prediction, pauza/rematch).
-- Verifikované s dvoma browser sessions cez Caddy (port 81): zápas
-  synchronizovaný, pozície hráčov rovnaké na oboch klientoch.
+## Etapa 5 — First touch ✅
+- **Dokončené**: FirstTouchResult (controlled/deflection), žiaden cyklus s resolvePossession.
+- **Súbory**: player.ts, types.ts.
+- **Testy**: 34/34.
+- **Ďalší krok**: Etapa 6 — prihrávky.
 
-## Etapa 6 — Mobilné ovládanie, nastavenia, audio, pixel-art, responzívne UI ✅
-- Virtuálny joystick + tlačidlá (Pointer Events, multitouch, landscape,
-  `touch-action:none`, blok scroll/zoom).
-- Web Audio programové zvuky (kop, prihrávka, žrď, hvizd, gól, potvrdenie,
-  ambient crowd). Nastavenia: zvuk, mobilné ovládanie, auto-prepínanie
-  (perzistentné v localStorage). Responzívne scény so sticky footerom.
+## Etapa 6 — Prihrávky ✅
+- **Dokončené**: 4 typy cez action systém, obmedzená asistencia ≤20°, through-ball predikcia.
+- **Súbory**: player.ts.
+- **Testy**: 34/34.
+- **Ďalší krok**: Etapa 7 — streľba.
 
-## Etapa 7 — Playwright, optimalizácia, Dockerfile, render.yaml, dokumentácia ✅
-- Playwright config + e2e testy (menu, offline zápas, ovládanie, pauza,
-  nastavenia, lobby).
-- `Dockerfile` (multi-stage Next.js standalone), `render.yaml`,
-  `.env.example`.
-- `package.json` skripty: `dev`, `build`, `start`, `lint`, `typecheck`,
-  `test`, `test:watch`, `test:e2e`.
+## Etapa 7 — Streľba ✅
+- **Dokončené**: reálna bránková čiara (nie 1e6), mierenie, 4 typy, presnosť z viacerých faktorov.
+- **Súbory**: player.ts, simulation.ts.
+- **Testy**: 34/34.
+- **Ďalší krok**: Etapa 8 — obrana/fauly.
 
-## Verifikácia v browseri (Agent Browser + VLM) ✅
-- Menu → výber tímu → zápas tok.
-- Canvas renderuje ihrisko, hráčov (červení/modrí), loptu, scoreboard, footer.
-- Simulácia beží, góly padajú, kickoff→play→goal→kickoff prechody.
-- Klávesnica hýbe aktívnym hráčom (D: x 320→474, vx=132).
-- Pauza (Esc) funguje, čas sa zastaví.
-- Sticky footer (gap=0 na desktope), responzívne na mobile.
-- tsc čistý, lint OK, 17/17 Vitest passing.
+## Etapa 8 — Obrana/Fauly ✅
+- **Dokončené**: fouls.ts (ball-first vs player-first, zozadu), čistý zásah lopty nie faul.
+- **Súbory**: fouls.ts (nový), simulation.ts, player.ts.
+- **Testy**: 34/34.
+- **Ďalší krok**: Etapa 9-11 — AI + brankár.
 
-## Známe obmedzenia
-- Ofsajd je implementovaný (detekcia + indirect free kick + počítadlá).
-- Online 1v1 je funkčný — vyžaduje spustený game server (`mini-services/game-server`)
-  a prístup cez Caddy gateway (port 81 v sandboxe), aby `XTransformPort` routing fungoval.
+## Etapy 9-11 — AI + Brankár ✅
+- **Dokončené**: CLEAR_BALL podľa vlastnej brány, INTERCEPT predikcia, MARK medzi súperom a bránou, GK prediction/parry/rush.
+- **Súbory**: ai.ts, goalkeeper.ts.
+- **Testy**: 34/34.
+- **Ďalší krok**: Etapa 12-13 — render/camera.
+
+## Etapy 12-13 — Render/Camera ✅
+- **Dokončené**: Y-sorting, drawActiveIndicator, asset manifest, camera look-ahead, screen shake.
+- **Súbory**: renderer.ts, camera.ts, src/game/assets/manifest.ts (nový), GameContainer.tsx.
+- **Testy**: 34/34.
+- **Ďalší krok**: Etapa 14 — štandardné situácie.
+
+## Etapa 14 — Štandardné situácie ✅
+- **Dokončené**: restart time limit (5s), žiadny ofsajd (futsal), aut nohou.
+- **Súbory**: simulation.ts.
+- **Testy**: 34/34.
+- **Ďalší krok**: Etapa 15 — testy.
+
+## Etapa 15 — Testy ✅
+- **Dokončené**: 14 gameplay testov, 100 AI vs AI zápasov, AI_SIMULATION_REPORT.md.
+- **Súbory**: tests/gameplay.test.ts (nový), docs/AI_SIMULATION_REPORT.md.
+- **Testy**: 48/48.
+- **Ďalší krok**: Etapa 16 — multiplayer.
+
+## Etapa 16 — Multiplayer ✅
+- **Dokončené**: server accumulator loop, last input hold, lastFullSnapshotAt, AI takeover, sessionId+reconnectToken, klient interpolácia (snapshot buffer 100ms), reconnect.
+- **Súbory**: mini-services/game-server/index.ts, src/game/net/client.ts.
+- **Testy**: 48/48.
+- **Ďalší krok**: Etapa 17 — online testy (odložené — vyžaduje bežiaci server).
+
+## Etapa 18 — Dokumentácia ✅
+- **Dokončené**: FINAL_REPORT.md, PROGRESS.md (tento súbor).
+- **Súbory**: docs/FINAL_REPORT.md, docs/PROGRESS.md.
+- **Testy**: 48/48, tsc/lint/build zelené.
