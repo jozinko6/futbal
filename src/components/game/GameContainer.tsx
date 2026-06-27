@@ -10,7 +10,7 @@ import {
   type InputFrame,
   type Team,
 } from '@/game/simulation';
-import { createCamera, updateCamera } from '@/game/render/camera';
+import { createCamera, updateCamera, addShake } from '@/game/render/camera';
 import { createRenderAssets, render, type RenderAssets } from '@/game/render/renderer';
 import { InputManager, P2_KEYS, P1_KEYS, type TouchState } from '@/game/input/InputManager';
 import { getSound } from '@/game/audio/Sound';
@@ -36,9 +36,11 @@ function handleSoundEvents(
   prevScore: [number, number],
   prevOwner: number | null,
   prevPeriod: string,
+  cam: { shake: number } | null,
 ): void {
   if (s.score[0] !== prevScore[0] || s.score[1] !== prevScore[1]) {
     sound.goal();
+    if (cam) addShake(cam as { shake: number } & { x: number; y: number }, 6); // goal shake
     return;
   }
   if (s.period !== prevPeriod) {
@@ -48,7 +50,11 @@ function handleSoundEvents(
   }
   if (prevOwner != null && s.ball.ownerId == null) {
     const sp = Math.hypot(s.ball.vx, s.ball.vy);
-    if (sp > 250) sound.kick(Math.min(1, sp / 560));
+    if (sp > 250) {
+      sound.kick(Math.min(1, sp / 560));
+      // Shot shake proportional to ball speed.
+      if (cam && sp > 400) addShake(cam as { shake: number } & { x: number; y: number }, Math.min(3, sp / 200));
+    }
   }
 }
 
@@ -265,7 +271,7 @@ export function GameContainer() {
           const prevOwner = s.ball.ownerId;
           const prevPeriod = s.period;
           stepMulti(s, inputs, FIXED_DT);
-          handleSoundEvents(sound, s, prevScore, prevOwner, prevPeriod);
+          handleSoundEvents(sound, s, prevScore, prevOwner, prevPeriod, camRef.current);
           accRef.current -= FIXED_DT;
           if ((s.period as string) === 'fulltime') {
             setFinalScore([...s.score] as [number, number]);

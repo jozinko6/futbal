@@ -68,15 +68,20 @@ export function render(
   const ball = state.ball;
   drawShadow(ctx, ball.x - origin.x, ball.y - origin.y, 7 - ball.z * 0.01, 0.22);
 
-  // --- Players ---
-  // Draw non-active first, active last so it sits on top.
-  const order = [...state.players].sort((a, b) => {
-    const aActive = activeIds.has(a.id) ? 1 : 0;
-    const bActive = activeIds.has(b.id) ? 1 : 0;
-    return aActive - bActive;
-  });
+  // --- Players (Y-sorted: lower y drawn first, so players further down the
+  // pitch appear in front. The active player is NOT forced on top — the
+  // indicator is drawn separately so it never occludes a correctly-sorted
+  // player.) ---
+  const order = [...state.players].sort((a, b) => a.y - b.y);
   for (const p of order) {
     drawPlayer(ctx, p.x - origin.x, p.y - origin.y, p, activeIds.has(p.id), state, assets);
+  }
+  // Active-player indicators drawn on top of everyone (ring + chevron only,
+  // not the sprite itself).
+  for (const p of order) {
+    if (activeIds.has(p.id)) {
+      drawActiveIndicator(ctx, p.x - origin.x, p.y - origin.y, p, state);
+    }
   }
 
   // --- Ball ---
@@ -178,6 +183,33 @@ function drawShadow(
   ctx.fill();
 }
 
+/** Active-player indicator (ring + chevron) drawn on top of all sprites. */
+function drawActiveIndicator(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  p: PlayerEntity,
+  state: MatchState,
+): void {
+  const colors = p.team === 0 ? TEAM_COLORS.home : TEAM_COLORS.away;
+  ctx.strokeStyle = colors.trim;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(Math.round(x), Math.round(y + 8), 12, 6, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  // Chevron above.
+  ctx.fillStyle = colors.trim;
+  const cx = Math.round(x);
+  const cy = Math.round(y - 20 - Math.sin(p.animTime * 6) * 1.5);
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx - 4, cy - 5);
+  ctx.lineTo(cx + 4, cy - 5);
+  ctx.closePath();
+  ctx.fill();
+  void state;
+}
+
 function drawPlayer(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -189,25 +221,6 @@ function drawPlayer(
 ): void {
   const colors = p.team === 0 ? TEAM_COLORS.home : TEAM_COLORS.away;
   const moving = Math.hypot(p.vx, p.vy) > 8;
-
-  // Active-player ring on the ground (drawn under the sprite).
-  if (isActive) {
-    ctx.strokeStyle = colors.trim;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(Math.round(x), Math.round(y + 8), 12, 6, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    // Chevron above.
-    ctx.fillStyle = colors.trim;
-    const cx = Math.round(x);
-    const cy = Math.round(y - 16 - Math.sin(p.animTime * 6) * 1.5);
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(cx - 4, cy - 5);
-    ctx.lineTo(cx + 4, cy - 5);
-    ctx.closePath();
-    ctx.fill();
-  }
 
   // --- Sprite-sheet blit (32×40, foot pivot at bottom-centre) ---
   const sheet = assets.sheets[p.team];
