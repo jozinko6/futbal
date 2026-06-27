@@ -156,12 +156,27 @@ function applyController(state: MatchState, c: HumanController, input: InputFram
   const highPressed = input.highPass && !c.prevHighPass;
   c.prevHighPass = input.highPass;
 
-  if (cur.hasBall && (passPressed || highPressed)) {
-    const dirX = input.moveX || Math.cos(cur.facing);
-    const dirY = input.moveY || Math.sin(cur.facing);
-    const tgt = assistedPassTargetSafe(state, cur, dirX, dirY);
-    pass(cur, tgt.x, tgt.y, state, highPressed ? 'lob' : tgt.type);
-    c.chargeTime = 0;
+  if (passPressed || highPressed) {
+    if (cur.hasBall) {
+      // Normal pass.
+      const dirX = input.moveX || Math.cos(cur.facing);
+      const dirY = input.moveY || Math.sin(cur.facing);
+      const tgt = assistedPassTargetSafe(state, cur, dirX, dirY);
+      pass(cur, tgt.x, tgt.y, state, highPressed ? 'lob' : tgt.type);
+      c.chargeTime = 0;
+    } else if (state.ball.mode === 'PASS' || state.ball.mode === 'SHOT' || state.ball.mode === 'FREE') {
+      // ONE-TOUCH PASS: ball is incoming, player redirects it without first controlling.
+      const ballDist = dist(cur.x, cur.y, state.ball.x, state.ball.y);
+      const ballSp = Math.hypot(state.ball.vx, state.ball.vy);
+      if (ballDist < m(2.5) && ballSp > 30) {
+        const dirX = input.moveX || Math.cos(cur.facing);
+        const dirY = input.moveY || Math.sin(cur.facing);
+        const tgt = assistedPassTargetSafe(state, cur, dirX, dirY);
+        // Short windup for one-touch — ball is kicked at contact tick.
+        pass(cur, tgt.x, tgt.y, state, highPressed ? 'lob' : tgt.type);
+        c.chargeTime = 0;
+      }
+    }
   }
 
   const shootReleased = c.prevShootHeld && !input.shootHeld;

@@ -39,20 +39,30 @@ export function applyMovement(
   // ARCADE stamina: sprint is NEVER blocked, just slightly slower when fatigued.
   const fatigued = p.stamina < STAMINA.fatigueThreshold;
   const fatigueMul = fatigued ? STAMINA.fatigueSpeedMul : 1;
-  // Determine target speed from SI config.
+
+  // --- Response curve: analog magnitude determines speed tier ---
+  // < 0.20 = deadzone (no movement)
+  // < 0.45 = walk
+  // < 0.78 = jog
+  // >= 0.78 = run
+  // sprint button + full magnitude = sprint
   let targetSpeed = 0;
-  if (mag > 0.01) {
+  if (mag >= 0.20) {
     const movingBackward = isBackward(p, moveX, moveY);
-    if (hasBall) {
-      targetSpeed = sprint ? mps(MOVEMENT.sprintWithBallSpeed) : mps(MOVEMENT.runWithBallSpeed);
-    } else if (sprint) {
-      targetSpeed = mps(MOVEMENT.sprintSpeed);
-    } else if (movingBackward) {
-      targetSpeed = mps(MOVEMENT.backwardSpeed);
+    let baseSpeed: number;
+    if (sprint && mag >= 0.78) {
+      // Full sprint.
+      baseSpeed = hasBall ? MOVEMENT.sprintWithBallSpeed : MOVEMENT.sprintSpeed;
+    } else if (mag >= 0.78) {
+      baseSpeed = hasBall ? MOVEMENT.runWithBallSpeed : MOVEMENT.runSpeed;
+    } else if (mag >= 0.45) {
+      baseSpeed = MOVEMENT.jogSpeed;
     } else {
-      targetSpeed = mps(MOVEMENT.runSpeed);
+      baseSpeed = MOVEMENT.walkSpeed;
     }
-    targetSpeed *= fatigueMul;
+    // Backward is always slower.
+    if (movingBackward) baseSpeed = Math.min(baseSpeed, MOVEMENT.backwardSpeed);
+    targetSpeed = mps(baseSpeed) * fatigueMul;
   }
 
   // Action locomotion: slow down during windup/contact/recovery.
@@ -65,12 +75,13 @@ export function applyMovement(
     }
   }
 
-  if (mag > 0.01) {
+  if (mag >= 0.20) {
     const nx = moveX / mag;
     const ny = moveY / mag;
     const desiredVx = nx * targetSpeed * locomotionMul;
     const desiredVy = ny * targetSpeed * locomotionMul;
-    let accelRate = (sprint ? MOVEMENT.sprintAcceleration : MOVEMENT.acceleration) * METER_PX;
+    const isSprinting = sprint && mag >= 0.78;
+    let accelRate = (isSprinting ? MOVEMENT.sprintAcceleration : MOVEMENT.acceleration) * METER_PX;
     if (fatigued) accelRate *= STAMINA.fatigueAccelMul;
     p.vx = approach(p.vx, desiredVx, accelRate * dt);
     p.vy = approach(p.vy, desiredVy, accelRate * dt);
@@ -81,16 +92,16 @@ export function applyMovement(
     // Body facing turns at a rate depending on ball/sprint.
     const desiredFacing = p.moveDir;
     let turnRate: number = hasBall ? MOVEMENT.turnRateWithBall : MOVEMENT.turnRate;
-    if (sprint) turnRate = MOVEMENT.turnRateSprint;
+    if (isSprinting) turnRate = MOVEMENT.turnRateSprint;
     p.facing = approachAngle(p.facing, desiredFacing, turnRate * dt);
 
-    p.state = sprint ? 'sprint' : 'run';
+    p.state = isSprinting ? 'sprint' : 'run';
   } else {
     decel(p, dt);
     p.state = 'idle';
   }
-  p._sprintThisTick = sprint;
-  p._movingThisTick = mag > 0.01;
+  p._sprintThisTick = sprint && mag >= 0.78;
+  p._movingThisTick = mag >= 0.20;
   p._hasBallThisTick = hasBall;
 }
 

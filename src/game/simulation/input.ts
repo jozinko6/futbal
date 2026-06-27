@@ -23,9 +23,9 @@ export function emptyInput(seq = 0): InputFrame {
 export function validateInput(raw: Partial<InputFrame>): InputFrame {
   const moveX = clampUnit(raw.moveX);
   const moveY = clampUnit(raw.moveY);
-  // Normalise tiny drift to zero (deadzone handled by caller, but be safe).
-  const mx = Math.abs(moveX) < 0.08 ? 0 : moveX;
-  const my = Math.abs(moveY) < 0.08 ? 0 : moveY;
+  // Deadzone: values below 0.20 are treated as zero (matches the response curve).
+  const mx = Math.abs(moveX) < 0.20 ? 0 : moveX;
+  const my = Math.abs(moveY) < 0.20 ? 0 : moveY;
   return {
     seq: Number.isFinite(raw.seq) ? (raw.seq as number) : 0,
     moveX: mx,
