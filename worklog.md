@@ -226,3 +226,51 @@ Stage Summary:
   ale pri aut/roh/bránke je publikum a banner jasne viditeľné.
 - VLM: "lively retro stadium feel similar to Sensible Soccer" — presne podľa referencie.
 - 23/23 testov passing, tsc čistý, lint OK.
+
+---
+Task ID: 11
+Agent: main
+Task: Logické AI pozície, GK ochrana + 5s limit, vylepšené oberanie, voľné kopy (priame/nepriame), penalty systém
+
+Work Log:
+- **AI formácia + pozície**: pridaná WING rola. Nová formácia (GK, 2 DEF, WING-ľavé, FWD-stred).
+  decideSupport prepísané role-aware: DEF ostáva vzadu (clamp na vlastnú polovicu),
+  WING drží krídlo (y toward flank), FWD stred a vysoko. decideDefensiveShape:
+  DEF hlboká línia (malý ball-track), WING ustupuje na krídlo, FWD vysoko (counter-threat),
+  MID komprimuje. Podporné nábehy: keď je nosič lopty pod tlakom, najbližší spoluhráč
+  sa ponúka na prihrávku v otvorenom priestore (away from nearest opponent) — nie clustering.
+- **GK possession protection**: tryTackle vracia false ak je owner GK — brankára s loptou
+  nemožno oberať. resolvePossession reset gkHoldTime keď GK získa loptu. Pridané
+  BallState.gkHoldTime + GK_HOLD_MAX=5s. V step loope: keď GK drží > 5s, automatický
+  kop od brány pre súpera (turnover).
+- **Voľné kopy (priame/nepriame)**: BallState.indirect flag. setupFreeKick(team,x,y,indirect).
+  Priamy voľný kop = možno streliť gól; nepriamy (offside, nepriamy faul) = lopta musí
+  byť dotknutá iným hráčom pred gólom. checkFieldEvents: ak indirect a lopta ide do bránky,
+  namiesto gólu sa prizná kop od brány. indirect sa resetuje pri dotyku hráča (resolvePossession).
+- **Faul system**: pri kolízii hráča v sklze (state='tackle') so súperom sa prizná faul.
+  awardFoul(foulingTeam, x, y): ak je faul v pokutovom území fauliaceho tímu → PENALTA,
+  inak priamy voľný kop pre súpera. Tackler po faule omráčený (stunned 0.8s).
+- **Penalty systém**: setupPenalty umiestni loptu na penaltú značku. RestartType 'penalty'.
+  Po remíze na konci zápasu → penalty shootout (period='penalties'): automatický sled
+  deterministických kopov (RNG-based, pravdepodobnosť gólu podľa náročnosti), best-of-5
+  + sudden death. decideShootoutWinner ukončí keď je rozhodnuté. Po skončení → fulltime.
+- **Nové polia**: BallState.gkHoldTime, BallState.indirect; MatchState.shootout
+  (kicksTaken, kicksScored, nextKicker, suddenDeath, kickerIndex). Konštanty GK_HOLD_MAX,
+  PENALTY_SPOT_X, PENALTY_SHOOTOUT_KICKS.
+- **Testy**: 31/31 Vitest (pridané 8: freeKick setup+indirect, penalty spot, awardFoul
+  box→penalty + outside→freekick, GK nemožno oberať, GK 5s limit, penalty shootout
+  end-to-end). tsc čistý, lint OK.
+- **Verifikácia v browseri**:
+  * AI pozície logické: GK vzadu, DEF na pozícii (x~350 T0 / ~820 T1), WING na krídle
+    (y~140), FWD v strede (y~364) — držia sa aj počas hry.
+  * Faul sa priznal prirodzene (restartType=freeKick pozorované).
+  * Penalty shootout: po remíze 2:2 sa rozstrelil, skončil 6:3 → fulltime.
+
+Stage Summary:
+- AI už nie je náhodná: DEF vzadu, WING po stranách, FWD v strede, spoluhráči sa
+  ponúkajú na prihrávku keď je nosič pod tlakom.
+- Brankára s loptou nemožno oberať; po 5s sa automaticky uvoľní (kop od brány súperovi).
+- Voľné kopy: priame (gól) + nepriame (offside, nutný dotyk).
+- Fauly zo sklzov → priamy voľný kop alebo penaľta v pokutovom území.
+- Penalty shootout po remíze: best-of-5 + sudden death, deterministický.
+- 31/31 testov passing, tsc/lint čistý.

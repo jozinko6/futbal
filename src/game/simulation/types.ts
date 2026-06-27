@@ -7,7 +7,7 @@
 import type { Difficulty } from './constants';
 
 export type Team = 0 | 1; // 0 = home (attacks right), 1 = away (attacks left)
-export type PlayerRole = 'GK' | 'DEF' | 'MID' | 'FWD';
+export type PlayerRole = 'GK' | 'DEF' | 'MID' | 'FWD' | 'WING';
 export type PlayerStateName =
   | 'idle'
   | 'run'
@@ -45,6 +45,12 @@ export interface BallState {
   possessionShield: number;
   /** Team protected by the possession shield (0, 1, or null). */
   shieldTeam: Team | null;
+  /** Seconds the goalkeeper has held the ball. When it exceeds GK_HOLD_MAX
+   *  the keeper is forced to release (auto goal-kick / throw). */
+  gkHoldTime: number;
+  /** When true, the ball came from an INDIRECT free kick and cannot be scored
+   *  directly — it must touch another player first. */
+  indirect: boolean;
 }
 
 export interface PlayerEntity {
@@ -106,7 +112,14 @@ export type MatchPeriod =
   | 'extratime'
   | 'penalties';
 
-export type RestartType = 'kickoff' | 'goalKick' | 'corner' | 'throwIn' | 'freeKick' | null;
+export type RestartType =
+  | 'kickoff'
+  | 'goalKick'
+  | 'corner'
+  | 'throwIn'
+  | 'freeKick'
+  | 'penalty'
+  | null;
 
 /**
  * A human-controlled slot. Solo play uses one controller (team 0); local 2P
@@ -173,6 +186,17 @@ export interface MatchState {
   } | null;
   /** Total offside count per team (for the HUD / stats). */
   offsides: [number, number];
+  /** Penalty shootout state (set when period === 'penalties'). */
+  shootout: {
+    kicksTaken: [number, number];
+    kicksScored: [number, number];
+    /** Which team kicks next (0 or 1). */
+    nextKicker: Team;
+    /** Whether sudden death has begun (after PENALTY_SHOOTOUT_KICKS each). */
+    suddenDeath: boolean;
+    /** Index of the next kicking player per team (rotates). */
+    kickerIndex: [number, number];
+  } | null;
 }
 
 /** A single timestamped input frame from the human client. */

@@ -17,18 +17,21 @@ import {
   FIELD_CX,
   FIELD_CY,
   FIXED_DT,
+  GK_HOLD_MAX,
   GOAL_BOTTOM,
   GOAL_TOP,
   HALF_LENGTH_OPTIONS,
+  PENALTY_SHOOTOUT_KICKS,
+  PENALTY_SPOT_X,
   PLAYERS_PER_TEAM,
   PLAYER_RADIUS,
   SHOOT_CHARGE_TIME,
   type Difficulty,
 } from './constants';
 import type { HumanController, InputFrame, MatchState, PlayerEntity, Team } from './types';
-import { hashSeed, rngCreate } from './rng';
+import { hashSeed, rngCreate, rngFloat } from './rng';
 import { buildPlayers, resetToFormation, teamOf } from './formation';
-import { setupKickoff, setupRestart, awardGoal, awardOffside, checkFieldEvents, isReceiverOffside, resolveGoalPosts } from './rules';
+import { setupKickoff, setupRestart, awardGoal, awardFoul, awardOffside, checkFieldEvents, isReceiverOffside, resolveGoalPosts } from './rules';
 import { applyMovement, dribble, integratePlayer, resolvePlayerCollision, resolvePossession, shoot, pass, startTackle, tryTackle } from './player';
 import { integrateBall } from './ball';
 import { aiAct } from './ai';
@@ -92,6 +95,8 @@ export function createMatchState(opts: CreateMatchOptions = {}): MatchState {
       releaseCooldown: 0,
       possessionShield: 0,
       shieldTeam: null,
+      gkHoldTime: 0,
+      indirect: false,
     },
     players: buildPlayers(),
     controllers,
@@ -110,6 +115,7 @@ export function createMatchState(opts: CreateMatchOptions = {}): MatchState {
     bannerTimer: 1.2,
     offsideCheck: null,
     offsides: [0, 0],
+    shootout: null,
   };
   resetToFormation(state.players);
   setupKickoff(state, 0 as Team);
@@ -118,6 +124,92 @@ export function createMatchState(opts: CreateMatchOptions = {}): MatchState {
 
 export function setDifficulty(state: MatchState, d: Difficulty): void {
   state.difficulty = d;
+}
+
+// --- Penalty shootout -------------------------------------------------------
+
+/** Begin a penalty shootout after a tied match. */
+function startShootout(state: MatchState): void {
+  state.period = 'penalties';
+  state.shootout = {
+    kicksTaken: [0, 0],
+    kicksScored: [0, 0],
+    nextKicker: 0 as Team,
+    suddenDeath: false,
+    kickerIndex: [0, 0],
+  };
+  state.banner = 'PENALTY ROZSTRELY';
+  state.bannerTimer = 2.5;
+  state.restartTimer = 2.5;
+  // Reset players to their own halves so the pitch is clear for kicks.
+  resetToFormation(state.players);
+}
+
+/**
+ * Resolve one penalty kick deterministically (the AI taker shoots; the keeper
+ * dives). Goal probability depends on difficulty. Advances the shootout until
+ * a winner is decided, then sets period = 'fulltime'.
+ */
+function advanceShootout(state: MatchState): void {
+  const sh = state.shootout;
+  if (!sh) {
+    state.period = 'fulltime';
+    return;
+  }
+  const team = sh.nextKicker;
+  const opp: Team = (1 - team) as Team;
+  // Goal probability ~ 70-85% depending on difficulty.
+  const p = state.difficulty === 'hard' ? 0.85 : state.difficulty === 'normal' ? 0.75 : 0.68;
+  const [nextRng, roll] = rngFloat(state.rngState, 0, 1);
+  state.rngState = nextRng;
+  const scored = roll < p;
+  if (scored) state.score[team]++;
+  sh.kicksTaken[team]++;
+  sh.kickerIndex[team] = (sh.kickerIndex[team] + 1) % 4; // rotate outfield takers
+
+  // Decide winner.
+  const [a, b] = state.score;
+  const ka = sh.kicksTaken[0];
+  const kb = sh.kicksTaken[1];
+  const done = decideShootoutWinner(a, b, ka, kb, sh.suddenDeath);
+  if (done) {
+    state.period = 'fulltime';
+    state.banner = 'KONIEC';
+    state.bannerTimer = 999;
+    state.shootout = null;
+    return;
+  }
+  // Switch kicker. Enter sudden death after PENALTY_SHOOTOUT_KICKS each.
+  sh.nextKicker = opp;
+  if (ka >= PENALTY_SHOOTOUT_KICKS && kb >= PENALTY_SHOOTOUT_KICKS) {
+    sh.suddenDeath = true;
+  }
+  state.banner = scored ? 'GÓL!' : 'MINUL!';
+  state.bannerTimer = 1.4;
+  state.restartTimer = 1.6;
+}
+
+/** True if the shootout has produced a winner under standard rules. */
+function decideShootoutWinner(
+  a: number,
+  b: number,
+  ka: number,
+  kb: number,
+  suddenDeath: boolean,
+): boolean {
+  if (!suddenDeath) {
+    // Best-of-N: a team wins early if the other can't catch up.
+    if (ka < PENALTY_SHOOTOUT_KICKS && a > b + (PENALTY_SHOOTOUT_KICKS - kb)) return true;
+    if (kb < PENALTY_SHOOTOUT_KICKS && b > a + (PENALTY_SHOOTOUT_KICKS - ka)) return true;
+    if (ka >= PENALTY_SHOOTOUT_KICKS && kb >= PENALTY_SHOOTOUT_KICKS) {
+      // After N kicks each, go to sudden death if tied.
+      return a !== b;
+    }
+    return false;
+  }
+  // Sudden death: both have taken equal kicks; one leads.
+  if (ka === kb && a !== b) return true;
+  return false;
 }
 
 /** Ids of all human-controlled players this tick. */
@@ -293,10 +385,21 @@ function advanceMatchFlow(state: MatchState, dt: number): void {
         state.banner = 'POLČAS';
         state.bannerTimer = 3;
       } else if (state.half === 2 && state.timeMs >= state.halfLength) {
-        state.period = 'fulltime';
-        state.banner = 'KONIEC ZÁPASU';
-        state.bannerTimer = 999;
+        if (state.score[0] === state.score[1]) {
+          // Tied at fulltime -> penalty shootout.
+          startShootout(state);
+        } else {
+          state.period = 'fulltime';
+          state.banner = 'KONIEC ZÁPASU';
+          state.bannerTimer = 999;
+        }
       }
+      break;
+    case 'penalties':
+      // The shootout is advanced by the dedicated step below; here we just
+      // tick the inter-kick timer.
+      state.restartTimer = Math.max(0, state.restartTimer - dt);
+      if (state.restartTimer <= 0) advanceShootout(state);
       break;
     case 'goal':
       state.restartTimer = Math.max(0, state.restartTimer - dt);
@@ -456,10 +559,29 @@ export function stepMulti(state: MatchState, inputs: InputFrame[], dt: number): 
     // 3. Integrate players.
     for (const p of state.players) integratePlayer(p, dt);
 
-    // 4. Player-player collisions.
+    // 4. Player-player collisions (with foul detection for sliding tackles).
     for (let i = 0; i < state.players.length; i++) {
       for (let j = i + 1; j < state.players.length; j++) {
-        resolvePlayerCollision(state.players[i], state.players[j]);
+        const a = state.players[i];
+        const b = state.players[j];
+        resolvePlayerCollision(a, b);
+        // A sliding tackler who collides with an opponent commits a foul
+        // (tripping). Award a free kick / penalty to the opponent at the
+        // contact point. Only one foul per tick.
+        if (state.period === 'play' && a.team !== b.team) {
+          if (a.state === 'tackle' && dist(a.x, a.y, b.x, b.y) < PLAYER_RADIUS * 2 + 2) {
+            awardFoul(state, a.team, a.x, a.y);
+            // End the slide and stun the tackler (booked-ish).
+            a.state = 'stunned';
+            a.stunnedTime = 0.8;
+            a.diveTime = 0;
+          } else if (b.state === 'tackle' && dist(a.x, a.y, b.x, b.y) < PLAYER_RADIUS * 2 + 2) {
+            awardFoul(state, b.team, b.x, b.y);
+            b.state = 'stunned';
+            b.stunnedTime = 0.8;
+            b.diveTime = 0;
+          }
+        }
       }
     }
 
@@ -475,6 +597,25 @@ export function stepMulti(state: MatchState, inputs: InputFrame[], dt: number): 
     if (state.ball.possessionShield > 0) {
       state.ball.possessionShield = Math.max(0, state.ball.possessionShield - dt);
       if (state.ball.possessionShield === 0) state.ball.shieldTeam = null;
+    }
+
+    // 5b. Goalkeeper hold timer — if the GK holds the ball too long, force a
+    // release (turnover goal-kick to the opposing team).
+    const owner5 = state.ball.ownerId != null ? state.players[state.ball.ownerId] : null;
+    if (owner5 && owner5.role === 'GK') {
+      state.ball.gkHoldTime += dt;
+      if (state.ball.gkHoldTime >= GK_HOLD_MAX) {
+        // Force a goal kick to the opposing team from the GK's position.
+        const opp: Team = (1 - owner5.team) as Team;
+        state.ball.x = owner5.x;
+        state.ball.y = owner5.y;
+        state.ball.gkHoldTime = 0;
+        setupRestart(state, 'goalKick', opp);
+        state.banner = 'KOP OD BRÁNY';
+        state.bannerTimer = 1.2;
+      }
+    } else {
+      state.ball.gkHoldTime = 0;
     }
 
     // 6. Possession, posts, last touch.

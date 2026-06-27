@@ -20,6 +20,9 @@ import {
   OFFSIDE_BANNER,
   OFFSIDE_ENABLED,
   OFFSIDE_TOLERANCE,
+  PENALTY_BOX_H,
+  PENALTY_BOX_W,
+  PENALTY_SPOT_X,
   POSSESSION_SHIELD,
   RESTART_SETUP_TIME,
 } from './constants';
@@ -90,6 +93,8 @@ export function checkFieldEvents(state: MatchState): FieldEvent {
   // Left goal line (home's goal). Away scores here.
   if (ball.x < FIELD_X - BALL_RADIUS) {
     if (ball.y > GOAL_TOP && ball.y < GOAL_BOTTOM && ball.z < CROSSBAR_Z) {
+      // Indirect free kick cannot be scored directly — no goal, goal kick.
+      if (ball.indirect) return { type: 'goalKick', team: 0 };
       return { type: 'goal', team: 1 };
     }
     // Not a goal -> corner or goal kick.
@@ -105,6 +110,7 @@ export function checkFieldEvents(state: MatchState): FieldEvent {
   // Right goal line (away's goal). Home scores here.
   if (ball.x > FIELD_RIGHT + BALL_RADIUS) {
     if (ball.y > GOAL_TOP && ball.y < GOAL_BOTTOM && ball.z < CROSSBAR_Z) {
+      if (ball.indirect) return { type: 'goalKick', team: 1 };
       return { type: 'goal', team: 0 };
     }
     if (lastTeam === 0) {
@@ -126,9 +132,10 @@ export function setupRestart(state: MatchState, type: RestartType, team: Team): 
   ball.ownerId = null;
   ball.releaseCooldown = 0.1;
   ball.z = 0;
+  ball.indirect = false;
   // Restart teams get a brief possession shield so opponents can't instantly
   // steal the ball before the restart team has touched it.
-  if (type === 'kickoff' || type === 'throwIn' || type === 'corner' || type === 'freeKick' || type === 'goalKick') {
+  if (type === 'kickoff' || type === 'throwIn' || type === 'corner' || type === 'freeKick' || type === 'goalKick' || type === 'penalty') {
     ball.possessionShield = POSSESSION_SHIELD;
     ball.shieldTeam = team;
   } else {
@@ -163,10 +170,21 @@ export function setupRestart(state: MatchState, type: RestartType, team: Team): 
       break;
     }
     case 'freeKick': {
-      // Indirect free kick (e.g. for offside). Ball placed at the offence
-      // spot; callers set ball.x/y before invoking.
+      // Ball placed at the offence spot; callers set ball.x/y before invoking.
       ball.x = Math.max(FIELD_X + 2, Math.min(FIELD_RIGHT - 2, ball.x));
       ball.y = Math.max(FIELD_TOP + 2, Math.min(FIELD_BOTTOM - 2, ball.y));
+      break;
+    }
+    case 'penalty': {
+      // Penalty kick from the penalty spot of the defending team's goal.
+      const defendingGoalX = team === 0 ? FIELD_X : FIELD_RIGHT; // team scores in opp goal
+      // `team` is the kicking team; they attack the opponent's goal.
+      const oppGoalX = team === 0 ? FIELD_RIGHT : FIELD_X;
+      void defendingGoalX;
+      ball.x = team === 0 ? oppGoalX - PENALTY_SPOT_X : oppGoalX + PENALTY_SPOT_X;
+      ball.y = FIELD_CY;
+      // Longer shield so the taker can set up.
+      ball.possessionShield = 1.2;
       break;
     }
     case null:
@@ -176,6 +194,47 @@ export function setupRestart(state: MatchState, type: RestartType, team: Team): 
   state.restartType = type;
   state.restartTeam = team;
   state.restartTimer = RESTART_SETUP_TIME;
+}
+
+/**
+ * Award a free kick to `team` at (x, y). If `indirect` is true the ball must
+ * touch another player before a goal can be scored (used for offside and
+ * non-shooting fouls); direct free kicks can be scored.
+ */
+export function setupFreeKick(state: MatchState, team: Team, x: number, y: number, indirect: boolean): void {
+  state.ball.x = x;
+  state.ball.y = y;
+  setupRestart(state, 'freeKick', team);
+  state.ball.indirect = indirect;
+  state.banner = indirect ? 'NEPRIAMY KOP' : 'VOĽNÝ KOP';
+  state.bannerTimer = 1.2;
+}
+
+/** Award a penalty kick to `team` (they attack the opponent's goal). */
+export function setupPenalty(state: MatchState, team: Team): void {
+  setupRestart(state, 'penalty', team);
+  state.banner = 'PENALTA';
+  state.bannerTimer = 1.6;
+}
+
+/**
+ * Award a foul committed by `foulingTeam` at (x, y). If the offence happened
+ * inside the fouling team's own penalty area, a penalty kick is awarded to the
+ * opposing team; otherwise a direct free kick is given (fouls from slides are
+ * "tripping" — direct). Returns true if a penalty was awarded.
+ */
+export function awardFoul(state: MatchState, foulingTeam: Team, x: number, y: number): boolean {
+  const attackingTeam: Team = (1 - foulingTeam) as Team;
+  // Penalty if the foul is inside the fouling team's own penalty area.
+  const inOwnBoxLeft = foulingTeam === 0 && x <= FIELD_X + PENALTY_BOX_W && Math.abs(y - FIELD_CY) <= PENALTY_BOX_H / 2;
+  const inOwnBoxRight = foulingTeam === 1 && x >= FIELD_RIGHT - PENALTY_BOX_W && Math.abs(y - FIELD_CY) <= PENALTY_BOX_H / 2;
+  if (inOwnBoxLeft || inOwnBoxRight) {
+    setupPenalty(state, attackingTeam);
+    return true;
+  }
+  // Direct free kick to the attacking team at the foul spot.
+  setupFreeKick(state, attackingTeam, x, y, false);
+  return false;
 }
 
 /** Begin a kickoff for the given team. */
@@ -284,14 +343,8 @@ export function awardOffside(state: MatchState, spotX: number, spotY: number): v
   if (!state.offsideCheck) return;
   const defendingTeam: Team = (1 - state.offsideCheck.passerTeam) as Team;
   state.offsides[state.offsideCheck.passerTeam]++;
-  state.ball.x = spotX;
-  state.ball.y = spotY;
-  state.ball.vx = 0;
-  state.ball.vy = 0;
-  state.ball.vz = 0;
-  state.ball.z = 0;
   state.offsideCheck = null;
-  setupRestart(state, 'freeKick', defendingTeam);
+  setupFreeKick(state, defendingTeam, spotX, spotY, true);
   state.banner = OFFSIDE_BANNER;
   state.bannerTimer = 1.4;
 }

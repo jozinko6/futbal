@@ -16,11 +16,16 @@ import {
   GOAL_BOTTOM,
   GOAL_TOP,
   BALL_MAX_SPEED,
+  GK_HOLD_MAX,
   kickBall,
   checkFieldEvents,
   pass,
   isReceiverOffside,
   awardOffside,
+  setupFreeKick,
+  setupPenalty,
+  awardFoul,
+  tryTackle,
   type InputFrame,
   type MatchState,
 } from '@/game/simulation';
@@ -442,5 +447,139 @@ describe('restarts with possession shield', () => {
     step(s, emptyInput(0), FIXED_DT);
     // Shield blocks the home player; only away may gain possession.
     expect(s.ball.ownerId).not.toBe(home.id);
+  });
+});
+
+describe('free kicks & penalties', () => {
+  it('setupFreeKick places the ball and sets the indirect flag', () => {
+    const s = createMatchState({ seed: 60 });
+    s.period = 'play';
+    setupFreeKick(s, 1 as Team, FIELD_CX + 50, FIELD_CY, true);
+    expect(s.restartType).toBe('freeKick');
+    expect(s.restartTeam).toBe(1);
+    expect(s.ball.indirect).toBe(true);
+    expect(s.ball.possessionShield).toBeGreaterThan(0);
+    expect(s.ball.shieldTeam).toBe(1);
+  });
+
+  it('indirect free kick cannot score directly (goal kick instead)', () => {
+    const s = createMatchState({ seed: 61 });
+    s.period = 'play';
+    s.ball.ownerId = null;
+    s.ball.indirect = true;
+    s.ball.x = FIELD_X + 6;
+    s.ball.y = FIELD_CY;
+    s.ball.z = 0;
+    s.ball.vx = -400;
+    s.ball.vy = 0;
+    s.lastTouchTeam = 1;
+    for (const p of s.players) {
+      p.x = FIELD_RIGHT - 20;
+      p.y = FIELD_BOTTOM - 20;
+    }
+    // Run until the ball crosses the goal line.
+    runFor(s, 0.2, emptyInput(0));
+    expect(s.score[1]).toBe(0);
+    expect(s.restartType).toBe('goalKick');
+    expect(s.ball.indirect).toBe(false);
+  });
+
+  it('setupPenalty places the ball on the penalty spot', () => {
+    const s = createMatchState({ seed: 62 });
+    s.period = 'play';
+    setupPenalty(s, 0 as Team); // home attacks right
+    expect(s.restartType).toBe('penalty');
+    expect(s.restartTeam).toBe(0);
+    // Home takes the penalty at the right penalty spot (near opp goal).
+    expect(s.ball.x).toBeCloseTo(FIELD_RIGHT - 96, 0);
+    expect(s.ball.y).toBeCloseTo(FIELD_CY, 0);
+  });
+
+  it('awardFoul gives a penalty for a foul inside the box', () => {
+    const s = createMatchState({ seed: 63 });
+    s.period = 'play';
+    // Foul by home (team 0) inside their own box (left).
+    const isPen = awardFoul(s, 0 as Team, FIELD_X + 40, FIELD_CY);
+    expect(isPen).toBe(true);
+    expect(s.restartType).toBe('penalty');
+    expect(s.restartTeam).toBe(1); // away gets the penalty
+  });
+
+  it('awardFoul gives a direct free kick outside the box', () => {
+    const s = createMatchState({ seed: 64 });
+    s.period = 'play';
+    const isPen = awardFoul(s, 0 as Team, FIELD_CX, FIELD_CY);
+    expect(isPen).toBe(false);
+    expect(s.restartType).toBe('freeKick');
+    expect(s.restartTeam).toBe(1);
+    expect(s.ball.indirect).toBe(false); // direct
+  });
+});
+
+describe('goalkeeper possession', () => {
+  it('outfield players cannot dispossess a goalkeeper', () => {
+    const s = createMatchState({ seed: 65 });
+    s.period = 'play';
+    const gk = s.players.find((p) => p.role === 'GK' && p.team === 0)!;
+    gk.x = FIELD_X + 60;
+    gk.y = FIELD_CY;
+    s.ball.ownerId = gk.id;
+    s.ball.x = gk.x;
+    s.ball.y = gk.y;
+    s.ball.possessionShield = 0;
+    s.ball.shieldTeam = null;
+    s.ball.releaseCooldown = 0;
+    const opp = s.players.find((p) => p.team === 1 && p.role !== 'GK')!;
+    opp.x = gk.x + 4;
+    opp.y = gk.y;
+    // tryTackle should fail against a GK owner.
+    const won = tryTackle(opp, s);
+    expect(won).toBe(false);
+    expect(s.ball.ownerId).toBe(gk.id);
+  });
+
+  it('goalkeeper is forced to release after GK_HOLD_MAX seconds', () => {
+    const s = createMatchState({ seed: 66 });
+    s.period = 'play';
+    const gk = s.players.find((p) => p.role === 'GK' && p.team === 0)!;
+    gk.x = FIELD_X + 60;
+    gk.y = FIELD_CY;
+    s.ball.ownerId = gk.id;
+    s.ball.x = gk.x;
+    s.ball.y = gk.y;
+    s.ball.gkHoldTime = 0;
+    s.ball.possessionShield = 0;
+    s.ball.shieldTeam = null;
+    // Run past the hold limit.
+    runFor(s, GK_HOLD_MAX + 0.3, emptyInput(0));
+    // Should have triggered a goal kick turnover to the away team.
+    expect(s.restartType).toBe('goalKick');
+    expect(s.restartTeam).toBe(1);
+  });
+});
+
+describe('penalty shootout', () => {
+  it('starts a shootout after a tied fulltime and produces a winner', () => {
+    const s = createMatchState({ seed: 67, halfLength: 4 });
+    s.period = 'play';
+    s.half = 2;
+    s.timeMs = 0;
+    s.score = [1, 1];
+    // Run until the half ends (4s) — tied -> shootout.
+    let started = false;
+    for (let i = 0; i < 2000; i++) {
+      step(s, emptyInput(0), FIXED_DT);
+      if (s.period === 'penalties') { started = true; break; }
+    }
+    expect(started).toBe(true);
+    // Run the shootout to completion.
+    let finished = false;
+    for (let i = 0; i < 4000; i++) {
+      step(s, emptyInput(0), FIXED_DT);
+      if (s.period === 'fulltime') { finished = true; break; }
+    }
+    expect(finished).toBe(true);
+    // A winner was decided (scores differ).
+    expect(s.score[0]).not.toBe(s.score[1]);
   });
 });

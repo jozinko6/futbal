@@ -89,6 +89,12 @@ export const SLIDE_RECOVER = 0.45;
 /** Time after a restart (kickoff/throw-in/corner/free-kick) during which the
  *  restart team's possession is protected — opponents cannot tackle/steal. */
 export const POSSESSION_SHIELD = 1.4;
+/** Max seconds a goalkeeper may hold the ball before being forced to release. */
+export const GK_HOLD_MAX = 5;
+/** Distance from the penalty spot for a penalty kick. */
+export const PENALTY_SPOT_X = 96; // from the goal line
+/** Penalty shootout: number of kicks per team before sudden death. */
+export const PENALTY_SHOOTOUT_KICKS = 5;
 
 // --- Ball ---------------------------------------------------------------
 

@@ -173,13 +173,72 @@ function pickPassTarget(state: MatchState, p: PlayerEntity): PlayerEntity | null
   return best;
 }
 
+/**
+ * Teammate without the ball, in possession phase. Each role holds a logical
+ * position and offers a passing lane toward the attacking goal:
+ *   DEF  — stay back (cover), drift toward own half only
+ *   WING — hold width on the flank, push forward when the ball is advanced
+ *   FWD  — stay central & high, offer a target ahead of the ball
+ *   MID  — link, sit between ball and own goal
+ *
+ * When the ball carrier is under pressure or has space to release the ball,
+ * teammates make themselves available by moving into open space ahead of the
+ * ball (supporting run), rather than clustering around it.
+ */
 function decideSupport(state: MatchState, p: PlayerEntity): void {
   const ball = state.ball;
-  const ahead = p.team === 0 ? 70 : -70;
-  const roleOffset =
-    p.role === 'FWD' ? ahead * 1.6 : p.role === 'MID' ? ahead : p.role === 'DEF' ? ahead * 0.4 : 0;
-  const tx = ball.x + roleOffset;
-  const ty = ball.y + (p.id % 2 === 0 ? -70 : 70);
+  const owner = ball.ownerId != null ? state.players[ball.ownerId] : null;
+  const slot = formationSlot(p.team, indexInTeam(p.id));
+  const dirSign = p.team === 0 ? 1 : -1; // attack direction (+x for home)
+
+  // Base target = formation slot, shifted toward the ball y.
+  let tx = slot.x;
+  let ty = slot.y + (ball.y - FIELD_CY) * (p.role === 'DEF' ? 0.15 : 0.3);
+
+  // Advance the role when the ball is in the attacking half.
+  const ballInAttHalf = p.team === 0 ? ball.x > FIELD_CX : ball.x < FIELD_CX;
+  if (ballInAttHalf) {
+    const ahead = 90 * dirSign;
+    if (p.role === 'FWD') tx = ball.x + ahead; // stay ahead of the ball centrally
+    else if (p.role === 'WING') tx = ball.x + ahead * 0.7; // wide run forward
+    else if (p.role === 'MID') tx = ball.x + ahead * 0.4; // link
+    // DEF stays back even when attacking.
+  }
+
+  // Supporting run: if the carrier is pressured or has had the ball a moment,
+  // the nearest non-FWD teammate offers a short forward passing lane.
+  if (owner && owner.id !== p.id && p.role !== 'GK') {
+    const carrierPressured = distToNearestOpponent(state, p.team, owner.x, owner.y) < 60;
+    const dToCarrier = dist(p.x, p.y, owner.x, owner.y);
+    if (carrierPressured && dToCarrier < 220) {
+      // Offer a lane diagonally ahead of the carrier, away from the nearest
+      // opponent (spread to space, not cluster).
+      const opp = nearestOpponent(state, p.team, p.x, p.y);
+      const awayX = opp ? Math.sign(p.x - opp.x) || dirSign : dirSign;
+      const awayY = opp ? Math.sign(p.y - opp.y) : (p.role === 'WING' ? Math.sign(slot.y - FIELD_CY) : 0);
+      tx = owner.x + 40 * dirSign + awayX * 30;
+      ty = owner.y + (awayY * 40 || (p.role === 'WING' ? (slot.y - FIELD_CY) * 0.6 : 0));
+      p.aiAction = 'support';
+      p.aiTarget = { x: clampX(tx), y: clampY(ty) };
+      return;
+    }
+  }
+
+  // Wingers hold width: clamp y toward their flank.
+  if (p.role === 'WING') {
+    const flankY = slot.y;
+    ty = ty * 0.4 + flankY * 0.6;
+  }
+  // FWD stays central in y.
+  if (p.role === 'FWD') {
+    ty = FIELD_CY + (ball.y - FIELD_CY) * 0.2;
+  }
+  // DEF stays in own half.
+  if (p.role === 'DEF') {
+    if (p.team === 0) tx = Math.min(tx, FIELD_CX - 30);
+    else tx = Math.max(tx, FIELD_CX + 30);
+  }
+
   p.aiAction = 'support';
   p.aiTarget = { x: clampX(tx), y: clampY(ty) };
 }
@@ -187,6 +246,37 @@ function decideSupport(state: MatchState, p: PlayerEntity): void {
 function decideDefensiveShape(state: MatchState, p: PlayerEntity, params: DiffParams): void {
   const ball = state.ball;
   const slot = formationSlot(p.team, indexInTeam(p.id));
+
+  // Defenders hold a deep line: track the ball's y only modestly and never
+  // advance beyond their own half unless pressing close to the ball.
+  if (p.role === 'DEF') {
+    const tx = slot.x + (ball.x - FIELD_CX) * 0.12;
+    const ty = slot.y + (ball.y - FIELD_CY) * 0.3;
+    p.aiAction =
+      params.aggression > 0.5 && dist(p.x, p.y, ball.x, ball.y) < 130 ? 'press' : 'mark';
+    p.aiTarget = { x: clampX(tx), y: clampY(ty) };
+    return;
+  }
+
+  // Wingers drop back to their flank when defending.
+  if (p.role === 'WING') {
+    const tx = slot.x - 80 * (p.team === 0 ? 1 : -1);
+    const ty = slot.y + (ball.y - FIELD_CY) * 0.2;
+    p.aiAction = dist(p.x, p.y, ball.x, ball.y) < 150 ? 'press' : 'mark';
+    p.aiTarget = { x: clampX(tx), y: clampY(ty) };
+    return;
+  }
+
+  // FWD stays high (counter-attack threat) — marks the halfway line area.
+  if (p.role === 'FWD') {
+    const tx = p.team === 0 ? FIELD_CX + 40 : FIELD_CX - 40;
+    const ty = FIELD_CY + (ball.y - FIELD_CY) * 0.15;
+    p.aiAction = 'mark';
+    p.aiTarget = { x: clampX(tx), y: clampY(ty) };
+    return;
+  }
+
+  // MID: compress toward own goal, track ball y.
   const compress = p.team === 0 ? -40 : 40;
   const tx = slot.x + compress + (ball.x - FIELD_CX) * 0.18;
   const ty = slot.y + (ball.y - FIELD_CY) * 0.4;

@@ -141,6 +141,9 @@ export function tryTackle(
   // Tackle can dispossess a nearby owner, or simply steal a loose ball.
   const owner = ball.ownerId != null ? state.players[ball.ownerId] : null;
   if (owner && owner.team !== tackler.team && dist(tackler.x, tackler.y, owner.x, owner.y) <= TACKLE_RADIUS) {
+    // Goalkeepers in possession cannot be dispossessed by outfield players —
+    // they must release the ball (throw / goal kick) themselves.
+    if (owner.role === 'GK') return false;
     dispossess(owner, state);
     return true;
   }
@@ -184,6 +187,10 @@ export function resolvePossession(state: MatchState): void {
       ball.vx = 0;
       ball.vy = 0;
       ball.vz = 0;
+      // Reset the GK hold timer when a goalkeeper collects the ball.
+      if (best.role === 'GK') ball.gkHoldTime = 0;
+      // An indirect free kick is "played" once any player touches it.
+      ball.indirect = false;
     }
     // Update hasBall flags.
     for (const p of state.players) p.hasBall = p.id === best.id;
