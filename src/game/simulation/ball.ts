@@ -80,6 +80,7 @@ export function kickBall(
   ball.releaseCooldown = 0.18;
   ball.spin += power * 0.01;
   clampBallSpeed(ball);
+  ball.mode = vz > 0 ? 'AERIAL' : 'FREE';
   ball.ballState = vz > 0 ? 'AIRBORNE' : 'LOOSE';
 }
 

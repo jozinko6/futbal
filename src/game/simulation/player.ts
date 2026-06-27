@@ -16,6 +16,7 @@ import { kickBall } from './ball';
 import { rngFloat } from './rng';
 import { startAction } from './actionSystem';
 import { resetContactTrack } from './fouls';
+import { setBallOwner, releaseBall, syncHasBall } from './ownership';
 
 // --- Movement --------------------------------------------------------------
 
@@ -113,7 +114,9 @@ function approachAngleDelta(from: number, to: number): number {
   return d;
 }
 
-/** Jockey/contain: face the ball, maintain standoff, move slowly. */
+/** Jockey/contain: face the ball, maintain standoff, move slowly.
+ *  ONLY sets desired velocity + facing — does NOT integrate position.
+ *  integratePlayer() handles position once per tick. */
 export function containMovement(p: PlayerEntity, ballX: number, ballY: number, dt: number): void {
   if (p.stunnedTime > 0 || p.actionLock > 0) { decel(p, dt); return; }
   p.facing = approachAngle(p.facing, angleTo(p.x, p.y, ballX, ballY), MOVEMENT.turnRate * dt);
@@ -129,8 +132,7 @@ export function containMovement(p: PlayerEntity, ballX: number, ballY: number, d
   p.vy = approach(p.vy, mvy * speed, accelRate * dt);
   p.moveDir = Math.atan2(mvy, mvx || 1);
   p.state = 'contain';
-  p.x += p.vx * dt;
-  p.y += p.vy * dt;
+  // NOTE: position is integrated by integratePlayer(), NOT here.
 }
 
 export function integratePlayer(p: PlayerEntity, dt: number): void {
@@ -219,12 +221,29 @@ export function resolvePlayerCollision(a: PlayerEntity, b: PlayerEntity): void {
 
 // --- Possession & first touch ---------------------------------------------
 
-/** Re-evaluate which player holds the ball (proximity + control radius).
- *  Uses computeFirstTouch() which returns a FirstTouchResult — only a
- *  `controlled` result assigns ownership; a deflection leaves the ball loose. */
+/** Re-evaluate which player holds the ball.
+ *  CRITICAL: If ball.mode is CONTROLLED, the current owner KEEPS the ball.
+ *  Possession is only assigned when the ball is FREE/PASS/SHOT/AERIAL. */
 export function resolvePossession(state: MatchState): void {
   const ball = state.ball;
   if (ball.releaseCooldown > 0) return;
+
+  // If already controlled, keep the current owner — do NOT reassign.
+  if (ball.mode === 'CONTROLLED' || ball.mode === 'GK_HELD') {
+    // Verify the owner is still valid (not stunned).
+    if (ball.ownerId != null) {
+      const owner = state.players[ball.ownerId];
+      if (owner && owner.stunnedTime > 0) {
+        // Owner stunned — release the ball.
+        releaseBall(state, 'FREE');
+        ball.x = owner.x; ball.y = owner.y;
+        ball.vx = owner.vx * 0.5; ball.vy = owner.vy * 0.5;
+      }
+    }
+    return;
+  }
+
+  // Ball is FREE/PASS/SHOT/AERIAL — find the nearest eligible player.
   let best: PlayerEntity | null = null;
   let bestD = CONTROL_RADIUS;
   for (const p of state.players) {
@@ -238,41 +257,26 @@ export function resolvePossession(state: MatchState): void {
     }
   }
   if (best) {
-    if (ball.ownerId !== best.id) {
-      // First touch: decide controlled vs deflection.
-      const result = computeFirstTouch(best, ball, state);
-      best.firstTouchQuality = result.quality;
-      if (result.controlled) {
-        ball.ownerId = best.id;
-        ball.vx = 0; ball.vy = 0; ball.vz = 0;
-        ball.touchTimer = 0; // first dribble touch happens next tick
-        if (best.role === 'goalkeeper') { ball.gkHoldTime = 0; ball.ballState = 'GOALKEEPER_CONTROLLED'; }
-        else ball.ballState = 'CONTROLLED';
-        ball.indirect = false;
-      } else {
-        // Bad first touch: deflect the ball into free space; do NOT assign
-        // ownership — the ball stays loose so the opponent can react.
-        kickBall(ball, result.deflectionVx, result.deflectionVy, Math.hypot(result.deflectionVx, result.deflectionVy), 0);
-        ball.ownerId = null;
-        ball.releaseCooldown = 0.25;
-        ball.ballState = 'LOOSE';
-        // Brief balance loss for the player who mishandled.
-        best.stunnedTime = Math.max(best.stunnedTime, 0.15);
-      }
+    // First touch: decide controlled vs deflection.
+    const result = computeFirstTouch(best, ball, state);
+    best.firstTouchQuality = result.quality;
+    if (result.controlled) {
+      ball.vx = 0; ball.vy = 0; ball.vz = 0;
+      ball.touchTimer = 0;
+      ball.indirect = false;
+      setBallOwner(state, best.id, best.role === 'goalkeeper' ? 'GK_HELD' : 'CONTROLLED');
+      if (best.role === 'goalkeeper') ball.gkHoldTime = 0;
     } else {
-      // Already the owner — keep flags in sync.
-      for (const p of state.players) p.hasBall = p.id === best.id;
-      return;
+      // Bad first touch: deflect into free space — ball stays FREE.
+      kickBall(ball, result.deflectionVx, result.deflectionVy, Math.hypot(result.deflectionVx, result.deflectionVy), 0);
+      releaseBall(state, 'FREE');
+      best.stunnedTime = Math.max(best.stunnedTime, 0.15);
     }
-    for (const p of state.players) p.hasBall = p.id === best.id;
   } else {
-    ball.ownerId = null;
-    for (const p of state.players) p.hasBall = false;
-    let opp = 0;
-    for (const p of state.players) {
-      if (dist(p.x, p.y, ball.x, ball.y) < CONTROL_RADIUS + m(0.5)) opp++;
+    // No one controls — ball is FREE.
+    if (ball.mode !== 'FREE' && ball.mode !== 'AERIAL') {
+      setBallOwner(state, null, ball.z > m(0.5) ? 'AERIAL' : 'FREE');
     }
-    ball.ballState = opp >= 2 ? 'CONTESTED' : 'LOOSE';
   }
 }
 
@@ -329,68 +333,49 @@ function computeFirstTouch(p: PlayerEntity, ball: BallState, state: MatchState):
 }
 
 /**
- * Touch-based dribbling using small physical impulses (NOT interpolation or
- * teleport). The ball is an independent physics entity; the dribbler gives it
- * a gentle forward nudge at a touch interval that depends on speed. At sprint
- * the ball is pushed further ahead and is easier to poke away.
+ * ARCADE DRIBBLING — the ball stays reliably with the player.
  *
- * Touch intervals (s):  walk 0.28–0.34, run 0.20–0.26, sprint 0.15–0.20.
- * Touch distances (m):  walk 0.25–0.40, run 0.40–0.70, sprint 0.70–1.10.
+ * Uses a foot socket: the ball position is calculated from the player's
+ * position + facing, with a forward/lateral offset that alternates feet
+ * for visual flavour. The ball does NOT randomly disconnect during normal
+ * play — it only becomes FREE on pass/shot/tackle/deflection.
+ *
+ * At sprint the ball is slightly further ahead (but still controlled).
+ * Sharp turns may nudge the ball sideways visually, but ownership is kept.
  */
 export function dribble(state: MatchState, dt: number): void {
   const ball = state.ball;
   if (ball.ownerId == null) return;
+  if (ball.mode !== 'CONTROLLED') return;
   const owner = state.players[ball.ownerId];
   if (!owner || owner.stunnedTime > 0) return;
-  // Integrate the ball as a free entity first (friction etc. handled in
-  // integrateBall — but the owner is carrying it, so we nudge it instead).
-  ball.touchTimer -= dt;
+
   const sp = len(owner.vx, owner.vy);
   const speedRatio = Math.min(1, sp / mps(MOVEMENT.sprintSpeed));
-  if (ball.touchTimer <= 0) {
-    // Re-touch: apply a small forward impulse (not a teleport).
-    const aheadDist = m(0.25) + speedRatio * m(0.85); // 0.25..1.10 m
-    const tx = owner.x + Math.cos(owner.facing) * aheadDist;
-    const ty = owner.y + Math.sin(owner.facing) * aheadDist;
-    // Sharp turn while dribbling → ball can skip sideways (deterministic).
-    const turnDelta = Math.abs(approachAngleDelta(owner.facing, owner.moveDir));
-    let nx = tx - ball.x;
-    let ny = ty - ball.y;
-    if (turnDelta > MOVEMENT.sharpTurnThreshold && sp > mps(MOVEMENT.runSpeed)) {
-      const perp = owner.facing + Math.PI / 2;
-      nx += Math.cos(perp) * m(0.15);
-      ny += Math.sin(perp) * m(0.15);
-    }
-    const nlen = Math.hypot(nx, ny) || 1;
-    // Impulse magnitude: enough to reach the touch point in ~touchInterval s.
-    const interval = 0.34 - speedRatio * 0.18; // 0.34..0.16 s
-    const impulseSpeed = (aheadDist / interval);
-    ball.vx = (nx / nlen) * impulseSpeed + owner.vx * 0.3;
-    ball.vy = (ny / nlen) * impulseSpeed + owner.vy * 0.3;
-    ball.vz = 0;
-    ball.touchTimer = Math.max(0.10, interval);
-  }
-  // Ball coasts with its own velocity between touches.
-  ball.x += ball.vx * dt;
-  ball.y += ball.vy * dt;
+
+  // Foot socket: ball ahead of player by facing, offset alternates L/R.
+  const aheadDist = m(0.3) + speedRatio * m(0.5); // 0.3..0.8 m
+  const lateralBase = m(0.15);
+  // Dribble phase from animTime — alternates feet every ~0.25s.
+  const phase = Math.sin(owner.animTime * 8) > 0 ? 1 : -1;
+  const lateral = lateralBase * phase * (sp > 1 ? 1 : 0);
+
+  const cos = Math.cos(owner.facing);
+  const sin = Math.sin(owner.facing);
+  // Forward + lateral (perpendicular to facing).
+  const targetX = owner.x + cos * aheadDist - sin * lateral;
+  const targetY = owner.y + sin * aheadDist + cos * lateral;
+
+  // Smoothly move the ball to the foot socket position (fast lerp = sticky).
+  const k = Math.min(1, 20 * dt);
+  ball.x += (targetX - ball.x) * k;
+  ball.y += (targetY - ball.y) * k;
   ball.z = 0;
-  // Ground friction on the carried ball (light, so it doesn't run away).
-  const fric = mps(BALL.friction) * 0.4 * dt;
-  const bs = Math.hypot(ball.vx, ball.vy);
-  if (bs > 0) {
-    const ns = Math.max(0, bs - fric);
-    ball.vx *= ns / bs;
-    ball.vy *= ns / bs;
-  }
-  // If the ball gets too far from the owner (poke/deflection), release it.
-  const d = dist(ball.x, ball.y, owner.x, owner.y);
-  const maxCarry = m(1.5) + speedRatio * m(1.0); // up to ~2.5 m at sprint
-  if (d > maxCarry) {
-    ball.ownerId = null;
-    ball.releaseCooldown = 0.15;
-    ball.ballState = 'LOOSE';
-    for (const p of state.players) p.hasBall = false;
-  }
+  ball.vx = owner.vx;
+  ball.vy = owner.vy;
+  ball.vz = 0;
+  // Spin for visual effect.
+  ball.spin += sp * dt * 0.08;
 }
 
 // --- Tackles & defense -----------------------------------------------------
@@ -416,7 +401,7 @@ export function pokeTackle(tackler: PlayerEntity, state: MatchState): boolean {
     // Poke: nudge the ball away from the owner.
     const dir = angleTo(owner.x, owner.y, tackler.x, tackler.y);
     kickBall(ball, Math.cos(dir), Math.sin(dir), mps(BALL.passSpeed.short), 0);
-    owner.hasBall = false;
+    releaseBall(state, 'FREE');
     tackler.pokeCooldown = DEFENSE.pokeCooldown;
     return true;
   }
@@ -437,12 +422,10 @@ export function tryTackle(tackler: PlayerEntity, state: MatchState): boolean {
 }
 
 export function dispossess(p: PlayerEntity, state: MatchState): void {
-  p.hasBall = false;
   p.stunnedTime = DEFENSE.stunDuration;
   p.state = 'stunned';
-  state.ball.ownerId = null;
+  releaseBall(state, 'FREE');
   state.ball.releaseCooldown = 0.25;
-  state.ball.ballState = 'LOOSE';
 }
 
 export function gkDive(gk: PlayerEntity, dirX: number, dirY: number): void {
@@ -535,7 +518,7 @@ export function pass(
   const power = mps(BALL.passSpeed[type] ?? BALL.passSpeed.short);
   startAction(passer, state, actionType, targetX, targetY, power);
   passer.aimDir = angleTo(passer.x, passer.y, targetX, targetY);
-  passer.hasBall = false;
+  releaseBall(state, 'PASS');
 }
 
 /** Apply the kick of a pass action at the contact tick. */
@@ -569,7 +552,7 @@ export function shoot(
   // stored here is the player's intended target.
   const power = Math.min(BALL.shootMax, BALL.shootMin + charge * (BALL.shootMax - BALL.shootMin));
   startAction(shooter, state, actionType, targetX, targetY, power);
-  shooter.hasBall = false;
+  releaseBall(state, 'SHOT');
   shooter.aimDir = angleTo(shooter.x, shooter.y, targetX, targetY);
 }
 

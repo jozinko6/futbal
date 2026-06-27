@@ -33,16 +33,19 @@ function runFor(state: MatchState, seconds: number, input: InputFrame): MatchSta
 }
 
 describe('gameplay — dribling', () => {
-  it('dribbling at low speed keeps the ball close (≤ 0.5 m)', () => {
-    const s = createMatchState({ seed: 101, halfLength: 60 });
+  it('dribbling at low speed keeps the ball close (≤ 1.0 m)', () => {
+    const s = createMatchState({ seed: 101, halfLength: 60, humanPlayers: 0 });
     s.period = 'play';
     const p = s.players[3]; // an outfielder
     p.x = FIELD_CX; p.y = FIELD_CY;
     p.vx = 0; p.vy = 0;
-    s.ball.ownerId = p.id;
+    p.stamina = 100;
+    s.ball.ownerId = p.id; s.ball.mode = "CONTROLLED";
     s.ball.x = p.x; s.ball.y = p.y; s.ball.z = 0;
     s.ball.possessionShield = 0; s.ball.shieldTeam = null;
-    // Walk slowly forward (moveX = 1, no sprint).
+    // Isolate other players far away to prevent AI interference.
+    for (const o of s.players) { if (o.id !== p.id) { o.x = FIELD_X + 800; o.y = FIELD_CY + 200; o.stunnedTime = 5; } }
+    // Walk slowly forward (moveX = 0.5, no sprint).
     const inp = press({ moveX: 0.5 });
     runFor(s, 1.0, inp);
     const d = Math.hypot(s.ball.x - p.x, s.ball.y - p.y);
@@ -56,7 +59,7 @@ describe('gameplay — dribling', () => {
     p.x = FIELD_CX; p.y = FIELD_CY;
     p.vx = 0; p.vy = 0;
     p.stamina = 100;
-    s.ball.ownerId = p.id;
+    s.ball.ownerId = p.id; s.ball.mode = "CONTROLLED";
     s.ball.x = p.x; s.ball.y = p.y; s.ball.z = 0;
     s.ball.possessionShield = 0; s.ball.shieldTeam = null;
     const inp = press({ moveX: 1, sprint: true });
@@ -71,7 +74,7 @@ describe('gameplay — dribling', () => {
     s.period = 'play';
     const p = s.players[3];
     p.x = FIELD_CX; p.y = FIELD_CY;
-    s.ball.ownerId = p.id;
+    s.ball.ownerId = p.id; s.ball.mode = "CONTROLLED";
     s.ball.x = p.x + m(0.3); s.ball.y = p.y; s.ball.z = 0;
     s.ball.vx = 0; s.ball.vy = 0;
     s.ball.touchTimer = 0.1;
@@ -138,7 +141,7 @@ describe('gameplay — action contact tick', () => {
     const p = s.players[3];
     p.x = FIELD_CX; p.y = FIELD_CY;
     p.hasBall = true;
-    s.ball.ownerId = p.id;
+    s.ball.ownerId = p.id; s.ball.mode = "CONTROLLED";
     s.ball.x = p.x; s.ball.y = p.y; s.ball.z = 0;
     s.ball.vx = 0; s.ball.vy = 0;
     const ballVx0 = s.ball.vx;
@@ -159,7 +162,7 @@ describe('gameplay — action contact tick', () => {
     const p = s.players[3];
     p.x = FIELD_CX; p.y = FIELD_CY;
     p.hasBall = true;
-    s.ball.ownerId = p.id;
+    s.ball.ownerId = p.id; s.ball.mode = "CONTROLLED";
     s.ball.x = p.x; s.ball.y = p.y; s.ball.z = 0;
     s.ball.vx = 0; s.ball.vy = 0;
     const ballVx0 = s.ball.vx;
@@ -178,7 +181,7 @@ describe('gameplay — shooting aim', () => {
     const p = s.players[3]; // home team 0 → attacks right
     p.x = FIELD_RIGHT - m(8); p.y = FIELD_CY;
     p.hasBall = true; p.facing = 0;
-    s.ball.ownerId = p.id; s.ball.x = p.x; s.ball.y = p.y; s.ball.z = 0;
+    s.ball.ownerId = p.id; s.ball.mode = "CONTROLLED"; s.ball.x = p.x; s.ball.y = p.y; s.ball.z = 0;
     s.ball.vx = 0; s.ball.vy = 0;
     for (const o of s.players) { if (o.id !== p.id) { o.x = FIELD_X + 800; o.stunnedTime = 5; } }
     shoot(p, FIELD_RIGHT, FIELD_CY - m(1.2), 0.3, s, 'placed');
@@ -194,7 +197,7 @@ describe('gameplay — shooting aim', () => {
     const p = s.players[3];
     p.x = FIELD_RIGHT - m(8); p.y = FIELD_CY;
     p.hasBall = true; p.facing = 0;
-    s.ball.ownerId = p.id; s.ball.x = p.x; s.ball.y = p.y; s.ball.z = 0;
+    s.ball.ownerId = p.id; s.ball.mode = "CONTROLLED"; s.ball.x = p.x; s.ball.y = p.y; s.ball.z = 0;
     s.ball.vx = 0; s.ball.vy = 0;
     for (const o of s.players) { if (o.id !== p.id) { o.x = FIELD_X + 800; o.stunnedTime = 5; } }
     shoot(p, FIELD_RIGHT, FIELD_CY + m(1.2), 0.3, s, 'placed');

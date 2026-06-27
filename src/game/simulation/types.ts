@@ -56,19 +56,42 @@ export type FirstTouchResult =
   | { controlled: true; quality: number }
   | { controlled: false; quality: number; deflectionVx: number; deflectionVy: number };
 
+/** Explicit ball mode — the single source of truth for ball state. */
+export type BallMode =
+  | 'FREE'
+  | 'CONTROLLED'
+  | 'PASS'
+  | 'SHOT'
+  | 'AERIAL'
+  | 'GK_HELD'
+  | 'RESTART'
+  | 'OUT_OF_PLAY';
+
 export interface BallState {
   x: number; y: number; z: number;
   vx: number; vy: number; vz: number;
   spin: number;
+  /** Single source of truth for ball ownership. */
   ownerId: number | null;
+  /** Previous owner (for throw-in/corner attribution). */
+  previousOwnerId: number | null;
+  /** Last player to touch the ball. */
+  lastTouchPlayerId: number | null;
+  /** Last team to touch the ball. */
+  lastTouchTeam: Team | null;
+  /** Tick when control started (for GK hold timer etc.). */
+  controlStartedTick: number;
+  /** Tick when the ball was released (pass/shot). */
+  releaseTick: number;
+  /** Explicit ball mode. */
+  mode: BallMode;
+  // Legacy fields (kept for compat, synced from mode):
   releaseCooldown: number;
   possessionShield: number;
   shieldTeam: Team | null;
   gkHoldTime: number;
   indirect: boolean;
-  /** Explicit ball phase. */
   ballState: BallStateName;
-  /** Time until the dribbler must re-touch the ball (touch-based dribbling). */
   touchTimer: number;
 }
 

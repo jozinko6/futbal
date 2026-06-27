@@ -274,31 +274,15 @@ export function GameContainer() {
       }
 
       updateCamera(camRef.current, s, dt);
-      // Consume presentation events + update effects.
+      // Consume presentation events (sounds only during gameplay debugging;
+      // visual effects disabled until gameplay is solid).
       if (presRef.current) {
         presRef.current.consumeEvents(s);
         presRef.current.update(dt);
-        // Record ball trail.
-        const ballSp = Math.hypot(s.ball.vx, s.ball.vy);
-        presRef.current.recordTrail(s.ball.x, s.ball.y, s.ball.z, ballSp);
-        // Record replay frame.
-        presRef.current.recordReplayFrame(s, camRef.current.x, camRef.current.y);
       }
-      // Render with shake offset applied to camera origin.
-      const shakeOff = presRef.current?.shakeOffset ?? { x: 0, y: 0 };
+      // Render — no shake/particles/trail during gameplay debugging.
       if (assetsRef.current) {
-        // Temporarily offset camera for render.
-        const origX = camRef.current.x;
-        const origY = camRef.current.y;
-        camRef.current.x += shakeOff.x;
-        camRef.current.y += shakeOff.y;
         render(ctx, s, camRef.current, assetsRef.current);
-        camRef.current.x = origX;
-        camRef.current.y = origY;
-        // Render particles + trail on top.
-        const origin = { x: Math.round(camRef.current.x - 320 + shakeOff.x), y: Math.round(camRef.current.y - 180 + shakeOff.y) };
-        presRef.current?.renderTrail(ctx, origin.x, origin.y);
-        presRef.current?.renderParticles(ctx, origin.x, origin.y);
       }
       // Expose state for in-browser verification / debugging.
       if (typeof window !== 'undefined') {
