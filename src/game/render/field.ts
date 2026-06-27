@@ -31,13 +31,14 @@ import {
 export const WORLD_W = 1232;
 export const WORLD_H = 728;
 
-// Vibrant palette (all original — no copied assets).
-const GRASS_LIGHT = '#3aa84a';
-const GRASS_DARK = '#2f9240';
-const GRASS_EDGE = '#46c25a';
-const LINE_WHITE = '#f4fff0';
-const STANDS_DARK = '#10243f';
-const STANDS_MID = '#1a3458';
+// Vibrant palette from the central theme (no magic strings).
+import { GRASS, UI } from '@/game/presentation/theme';
+const GRASS_LIGHT = GRASS.grassLight;
+const GRASS_DARK = GRASS.grassDark;
+const GRASS_EDGE = GRASS.grassHighlight;
+const LINE_WHITE = GRASS.lineWhite;
+const STANDS_DARK = UI.backgroundDark;
+const STANDS_MID = UI.panelDark;
 const TRACK = '#7a5a2a';
 const TRACK_LINE = '#6a4a20';
 

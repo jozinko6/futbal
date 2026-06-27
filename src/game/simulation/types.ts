@@ -172,6 +172,8 @@ export interface MatchState {
   // Futsal tactical state
   teamPhase: [TeamPhase, TeamPhase];
   debug: boolean;
+  /** Presentation events produced during the current tick (drained by renderer). */
+  events: import('@/game/presentation/events').PresentationEvent[];
 }
 
 export interface InputFrame {

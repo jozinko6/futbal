@@ -84,13 +84,13 @@ export function MenuScreen({ onPlay, onLocal2P, onOnline, onSettings, onHowTo }:
         <Logo />
         <div className={`${PANEL} flex w-full flex-col gap-2.5 p-5`}>
           <RetroButton onClick={onPlay} className="w-full">
-            ▶ Hrať zápas (vs AI)
+            Hrať zápas (vs AI)
           </RetroButton>
           <RetroButton onClick={onLocal2P} className="w-full">
-            👥 Lokálny 2 hráči
+            Lokálny 2 hráči
           </RetroButton>
           <RetroButton onClick={onOnline} className="w-full">
-            🌐 Online 1v1
+            Online 1v1
           </RetroButton>
           <RetroButton variant="ghost" onClick={onHowTo} className="w-full">
             Ako hrať
@@ -198,7 +198,7 @@ export function TeamSelectScreen({ initial, onStart, onBack }: TeamSelectProps) 
             }
             className="flex-[2]"
           >
-            ▶ Štart
+            ŠTART
           </RetroButton>
         </div>
       </div>

@@ -17,6 +17,7 @@ import {
 } from '@/game/simulation';
 import { cameraOrigin, type Camera } from './camera';
 import { createFieldTexture, WORLD_H, WORLD_W } from './field';
+import { GRASS, UI, TEAMS } from '@/game/presentation/theme';
 import {
   ANIMATIONS,
   FRAME_H,
@@ -288,48 +289,85 @@ function drawBall(
 }
 
 function drawHUD(ctx: CanvasRenderingContext2D, state: MatchState): void {
-  // Top scoreboard bar.
-  ctx.fillStyle = 'rgba(10,20,14,0.72)';
-  ctx.fillRect(0, 0, VIEW_W, 18);
-  ctx.fillStyle = 'rgba(255,255,255,0.15)';
-  ctx.fillRect(0, 18, VIEW_W, 1);
+  // Top scoreboard bar — dark panel with pixel border.
+  ctx.fillStyle = UI.backgroundDark;
+  ctx.fillRect(0, 0, VIEW_W, 20);
+  ctx.fillStyle = UI.cyanAccent;
+  ctx.fillRect(0, 19, VIEW_W, 1);
 
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'center';
   ctx.font = 'bold 11px "Courier New", monospace';
 
+  // Team names + score.
   const homeName = 'ČERVENÍ';
   const awayName = 'MODRÍ';
-  const scoreText = `${homeName}  ${state.score[0]} - ${state.score[1]}  ${awayName}`;
-  ctx.fillStyle = TEAM_COLORS.home.jersey;
-  ctx.fillText(homeName, VIEW_W / 2 - 36, 9);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(`${state.score[0]} - ${state.score[1]}`, VIEW_W / 2, 9);
-  ctx.fillStyle = TEAM_COLORS.away.jersey;
-  ctx.fillText(awayName, VIEW_W / 2 + 40, 9);
+  ctx.fillStyle = TEAMS.home.jersey;
+  ctx.fillText(homeName, VIEW_W / 2 - 38, 10);
+  ctx.fillStyle = UI.whiteText;
+  ctx.font = 'bold 13px "Courier New", monospace';
+  ctx.fillText(`${state.score[0]} - ${state.score[1]}`, VIEW_W / 2, 10);
+  ctx.font = 'bold 11px "Courier New", monospace';
+  ctx.fillStyle = TEAMS.away.jersey;
+  ctx.fillText(awayName, VIEW_W / 2 + 42, 10);
 
-  // Clock (right).
+  // Clock (right) — yellow when low.
   const remaining = Math.max(0, state.halfLength - state.timeMs);
   const mm = Math.floor(remaining / 60);
   const ss = Math.floor(remaining % 60);
+  const lowTime = remaining < 30;
   ctx.textAlign = 'right';
-  ctx.fillStyle = '#eafff0';
-  ctx.fillText(`${mm}:${ss.toString().padStart(2, '0')}`, VIEW_W - 8, 9);
+  ctx.fillStyle = lowTime ? UI.dangerRed : UI.yellowAccent;
+  ctx.fillText(`${mm}:${ss.toString().padStart(2, '0')}`, VIEW_W - 8, 10);
   // Half indicator (left).
   ctx.textAlign = 'left';
-  ctx.fillStyle = '#9fd6b0';
-  ctx.fillText(`P${state.half}`, 8, 9);
+  ctx.fillStyle = UI.mutedText;
+  ctx.fillText(`P${state.half}`, 8, 10);
+
+  // Stamina bar for the active player (bottom-left).
+  const activeId = state.controllers[0]?.activeId ?? 0;
+  const active = state.players[activeId];
+  if (active && active.role !== 'goalkeeper') {
+    const barX = 8;
+    const barY = VIEW_H - 12;
+    const barW = 50;
+    const barH = 4;
+    ctx.fillStyle = UI.panelDark;
+    ctx.fillRect(barX, barY, barW, barH);
+    const ratio = active.stamina / 100;
+    ctx.fillStyle = ratio > 0.5 ? UI.successGreen : ratio > 0.25 ? UI.yellowAccent : UI.dangerRed;
+    ctx.fillRect(barX, barY, Math.round(barW * ratio), barH);
+    ctx.strokeStyle = UI.pixelBorder;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(barX + 0.5, barY + 0.5, barW, barH);
+    // Label.
+    ctx.fillStyle = UI.mutedText;
+    ctx.font = '7px "Courier New", monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('STM', barX, barY - 4);
+  }
+
+  // Team phase indicators (bottom corners).
+  ctx.fillStyle = UI.mutedText;
+  ctx.font = '7px "Courier New", monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(state.teamPhase[0].slice(0, 8), VIEW_W - 8, VIEW_H - 12);
+  ctx.textAlign = 'left';
+  ctx.fillText(state.teamPhase[1].slice(0, 8), 60, VIEW_H - 12);
 }
 
 function drawBanner(ctx: CanvasRenderingContext2D, text: string): void {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = 'bold 30px "Courier New", monospace';
+  ctx.font = 'bold 28px "Courier New", monospace';
   const x = VIEW_W / 2;
   const y = VIEW_H / 2 - 10;
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  // Shadow.
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
   ctx.fillText(text, x + 2, y + 2);
-  ctx.fillStyle = '#ffd23f';
+  // Main text — yellow for goals, cyan for others.
+  const isGoal = text.includes('GÓL');
+  ctx.fillStyle = isGoal ? UI.yellowAccent : UI.cyanAccent;
   ctx.fillText(text, x, y);
 }
 

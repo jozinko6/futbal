@@ -10,10 +10,11 @@ import {
   type InputFrame,
   type Team,
 } from '@/game/simulation';
-import { createCamera, updateCamera, addShake } from '@/game/render/camera';
+import { createCamera, updateCamera } from '@/game/render/camera';
 import { createRenderAssets, render, type RenderAssets } from '@/game/render/renderer';
 import { InputManager, P2_KEYS, P1_KEYS, type TouchState } from '@/game/input/InputManager';
 import { getSound } from '@/game/audio/Sound';
+import { PresentationManager } from '@/game/presentation/presentationManager';
 import { TouchControls } from './TouchControls';
 import { OnlineLobby, type OnlineConfig } from './OnlineLobby';
 import { OnlineMatch } from './OnlineMatch';
@@ -36,24 +37,12 @@ function handleSoundEvents(
   prevScore: [number, number],
   prevOwner: number | null,
   prevPeriod: string,
-  cam: { shake: number } | null,
 ): void {
-  if (s.score[0] !== prevScore[0] || s.score[1] !== prevScore[1]) {
-    sound.goal();
-    if (cam) addShake(cam as { shake: number } & { x: number; y: number }, 6); // goal shake
-    return;
-  }
+  // Most sounds are now triggered via PresentationEvents (BALL_KICKED, GOAL_SCORED, etc.)
+  // consumed by PresentationManager. This fallback handles period-change whistles.
   if (s.period !== prevPeriod) {
     if (s.period === 'kickoff' || s.period === 'halftime' || s.period === 'fulltime') {
       sound.whistle();
-    }
-  }
-  if (prevOwner != null && s.ball.ownerId == null) {
-    const sp = Math.hypot(s.ball.vx, s.ball.vy);
-    if (sp > 250) {
-      sound.kick(Math.min(1, sp / 560));
-      // Shot shake proportional to ball speed.
-      if (cam && sp > 400) addShake(cam as { shake: number } & { x: number; y: number }, Math.min(3, sp / 200));
     }
   }
 }
@@ -119,6 +108,7 @@ export function GameContainer() {
   const matchRef = useRef<MatchState | null>(null);
   const camRef = useRef(createCamera());
   const assetsRef = useRef<RenderAssets | null>(null);
+  const presRef = useRef<PresentationManager | null>(null);
   const input1Ref = useRef<InputManager | null>(null);
   const input2Ref = useRef<InputManager | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -223,6 +213,8 @@ export function GameContainer() {
     for (const c of state.controllers) c.autoSwitch = settingsRef.current.autoSwitch;
     matchRef.current = state;
     camRef.current = createCamera();
+    presRef.current = new PresentationManager();
+    presRef.current.setSound(sound);
     prevScoreRef.current = [0, 0];
     prevOwnerRef.current = null;
     prevPeriodRef.current = state.period;
@@ -271,7 +263,7 @@ export function GameContainer() {
           const prevOwner = s.ball.ownerId;
           const prevPeriod = s.period;
           stepMulti(s, inputs, FIXED_DT);
-          handleSoundEvents(sound, s, prevScore, prevOwner, prevPeriod, camRef.current);
+          handleSoundEvents(sound, s, prevScore, prevOwner, prevPeriod);
           accRef.current -= FIXED_DT;
           if ((s.period as string) === 'fulltime') {
             setFinalScore([...s.score] as [number, number]);
@@ -282,7 +274,32 @@ export function GameContainer() {
       }
 
       updateCamera(camRef.current, s, dt);
-      if (assetsRef.current) render(ctx, s, camRef.current, assetsRef.current);
+      // Consume presentation events + update effects.
+      if (presRef.current) {
+        presRef.current.consumeEvents(s);
+        presRef.current.update(dt);
+        // Record ball trail.
+        const ballSp = Math.hypot(s.ball.vx, s.ball.vy);
+        presRef.current.recordTrail(s.ball.x, s.ball.y, s.ball.z, ballSp);
+        // Record replay frame.
+        presRef.current.recordReplayFrame(s, camRef.current.x, camRef.current.y);
+      }
+      // Render with shake offset applied to camera origin.
+      const shakeOff = presRef.current?.shakeOffset ?? { x: 0, y: 0 };
+      if (assetsRef.current) {
+        // Temporarily offset camera for render.
+        const origX = camRef.current.x;
+        const origY = camRef.current.y;
+        camRef.current.x += shakeOff.x;
+        camRef.current.y += shakeOff.y;
+        render(ctx, s, camRef.current, assetsRef.current);
+        camRef.current.x = origX;
+        camRef.current.y = origY;
+        // Render particles + trail on top.
+        const origin = { x: Math.round(camRef.current.x - 320 + shakeOff.x), y: Math.round(camRef.current.y - 180 + shakeOff.y) };
+        presRef.current?.renderTrail(ctx, origin.x, origin.y);
+        presRef.current?.renderParticles(ctx, origin.x, origin.y);
+      }
       // Expose state for in-browser verification / debugging.
       if (typeof window !== 'undefined') {
         (window as unknown as { __rfa?: MatchState }).__rfa = s;

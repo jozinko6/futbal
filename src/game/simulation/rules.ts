@@ -10,6 +10,7 @@ import {
 } from './constants';
 import type { MatchState, PlayerEntity, RestartType, Team } from './types';
 import { resetToFormation } from './formation';
+import { emit } from '@/game/presentation/events';
 
 export type FieldEvent =
   | { type: 'goal'; team: Team }
@@ -170,6 +171,9 @@ export function awardGoal(state: MatchState, team: Team): void {
   state.offsideCheck = null;
   state.ball.ballState = 'OUT_OF_PLAY';
   for (const p of state.players) if (p.team === team) p.state = 'celebrate';
+  // Emit GOAL_SCORED + NET_HIT presentation events.
+  emit(state.events, { type: 'NET_HIT', tick: state.tick, x: state.ball.x, y: state.ball.y, speed: Math.hypot(state.ball.vx, state.ball.vy) });
+  emit(state.events, { type: 'GOAL_SCORED', tick: state.tick, team, x: state.ball.x, y: state.ball.y, speed: Math.hypot(state.ball.vx, state.ball.vy) });
 }
 
 // Futsal: offside disabled. Functions kept for API compat but no-op.

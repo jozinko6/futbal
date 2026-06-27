@@ -28,6 +28,7 @@ import { updateTeamTactics } from './teamTactics';
 import { updateGoalkeeper } from './goalkeeper';
 import { stepAction } from './actionSystem';
 import { evaluateTackleFoul, recordBallContact, resetContactTrack } from './fouls';
+import { emit } from '@/game/presentation/events';
 import { dist } from './math';
 
 export interface CreateMatchOptions {
@@ -70,6 +71,7 @@ export function createMatchState(opts: CreateMatchOptions = {}): MatchState {
     lastGoalTeam: null, banner: 'VÝKOP', bannerTimer: 1.2,
     offsideCheck: null, offsides: [0, 0], shootout: null,
     teamPhase: ['ORGANIZED_DEFENSE', 'ORGANIZED_DEFENSE'], debug: false,
+    events: [],
   };
   resetToFormation(state.players);
   setupKickoff(state, 0 as Team);
@@ -391,8 +393,10 @@ export function stepMulti(state: MatchState, inputs: InputFrame[], dt: number): 
         const a = ar.contact;
         if (a.type === 'shortPass' || a.type === 'drivenPass' || a.type === 'throughPass' || a.type === 'lobPass') {
           executePassKick(p, state, a);
+          emit(state.events, { type: 'BALL_KICKED', tick: state.tick, x: p.x, y: p.y, power: a.power, kickType: a.type });
         } else if (a.type === 'placedShot' || a.type === 'powerShot' || a.type === 'lobShot' || a.type === 'firstTimeShot') {
           executeShotKick(p, state, a);
+          emit(state.events, { type: 'BALL_KICKED', tick: state.tick, x: p.x, y: p.y, power: a.power, kickType: a.type });
         }
       }
     }
