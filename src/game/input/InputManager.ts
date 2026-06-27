@@ -82,9 +82,15 @@ export class InputManager {
     highPass: false,
     switchPlayer: false,
   };
-  private passPending = false;
-  private highPassPending = false;
-  private switchPending = false;
+  // Edge event queue — events are queued here and consumed one per sim tick.
+  private edgeQueue: Array<{
+    pass: boolean;
+    shootPressed: boolean;
+    shootReleased: boolean;
+    highPass: boolean;
+    switchPlayer: boolean;
+  }> = [];
+  private shootHeldState = false; // tracked for shootPressed/shootReleased edges
   private seq = 0;
   private opts: InputManagerOptions;
 
@@ -105,15 +111,20 @@ export class InputManager {
 
   setTouch(state: Partial<TouchState>) {
     Object.assign(this.touch, state);
-    if (state.pass) this.passPending = true;
-    if (state.highPass) this.highPassPending = true;
-    if (state.switchPlayer) this.switchPending = true;
+    if (state.pass) this.queueEdge({ pass: true, shootPressed: false, shootReleased: false, highPass: false, switchPlayer: false });
+    if (state.highPass) this.queueEdge({ pass: false, shootPressed: false, shootReleased: false, highPass: true, switchPlayer: false });
+    if (state.switchPlayer) this.queueEdge({ pass: false, shootPressed: false, shootReleased: false, highPass: false, switchPlayer: true });
   }
 
   consumeTouchEdges() {
     this.touch.pass = false;
     this.touch.highPass = false;
     this.touch.switchPlayer = false;
+  }
+
+  /** Queue an edge event to be consumed by the next sim tick. */
+  private queueEdge(e: { pass: boolean; shootPressed: boolean; shootReleased: boolean; highPass: boolean; switchPlayer: boolean }): void {
+    if (this.edgeQueue.length < 8) this.edgeQueue.push(e);
   }
 
   private onKeyDown = (e: KeyboardEvent) => {
@@ -132,14 +143,24 @@ export class InputManager {
       this.opts.onPause();
       return;
     }
-    if (k === km.pass) this.passPending = true;
-    if (k === km.highPass) this.highPassPending = true;
-    if (k === km.switch) this.switchPending = true;
+    if (k === km.pass) this.queueEdge({ pass: true, shootPressed: false, shootReleased: false, highPass: false, switchPlayer: false });
+    if (k === km.highPass) this.queueEdge({ pass: false, shootPressed: false, shootReleased: false, highPass: true, switchPlayer: false });
+    if (k === km.switch) this.queueEdge({ pass: false, shootPressed: false, shootReleased: false, highPass: false, switchPlayer: true });
+    if (k === km.shoot && !this.shootHeldState) {
+      this.shootHeldState = true;
+      this.queueEdge({ pass: false, shootPressed: true, shootReleased: false, highPass: false, switchPlayer: false });
+    }
     this.keys.add(k);
   };
 
   private onKeyUp = (e: KeyboardEvent) => {
-    this.keys.delete(e.key.toLowerCase());
+    const k = e.key.toLowerCase();
+    const km = this.opts.keys;
+    if (k === km.shoot && this.shootHeldState) {
+      this.shootHeldState = false;
+      this.queueEdge({ pass: false, shootPressed: false, shootReleased: true, highPass: false, switchPlayer: false });
+    }
+    this.keys.delete(k);
   };
 
   private onBlur = () => {
@@ -190,9 +211,10 @@ export class InputManager {
       if (pad.buttons[13]?.pressed) moveY += 1;
       if (pad.buttons[5]?.pressed) sprint = true;
       if (pad.buttons[1]?.pressed) shootHeld = true;
-      if (pad.buttons[0]?.pressed) this.passPending = true;
-      if (pad.buttons[2]?.pressed) this.highPassPending = true;
-      if (pad.buttons[4]?.pressed) this.switchPending = true;
+      // Queue gamepad edge events.
+      if (pad.buttons[0]?.pressed) this.queueEdge({ pass: true, shootPressed: false, shootReleased: false, highPass: false, switchPlayer: false });
+      if (pad.buttons[2]?.pressed) this.queueEdge({ pass: false, shootPressed: false, shootReleased: false, highPass: true, switchPlayer: false });
+      if (pad.buttons[4]?.pressed) this.queueEdge({ pass: false, shootPressed: false, shootReleased: false, highPass: false, switchPlayer: true });
     }
 
     if (this.touch.active) {
@@ -208,22 +230,38 @@ export class InputManager {
       moveY /= mag;
     }
 
+    // Drain one edge event from the queue (or all-false if empty).
+    const edge = this.edgeQueue.shift() ?? { pass: false, shootPressed: false, shootReleased: false, highPass: false, switchPlayer: false };
+
+    // Track shoot held state from edges.
+    if (edge.shootPressed) this.shootHeldState = true;
+    if (edge.shootReleased) this.shootHeldState = false;
+    // Use tracked shootHeldState for continuous shootHeld.
+    if (this.shootHeldState) shootHeld = true;
+
     const frame = validateInput({
       seq: this.seq++,
       moveX,
       moveY,
       sprint,
-      pass: this.passPending,
+      pass: edge.pass,
       shootHeld,
-      highPass: this.highPassPending,
-      switchPlayer: this.switchPending,
+      highPass: edge.highPass,
+      switchPlayer: edge.switchPlayer,
     });
 
-    this.passPending = false;
-    this.highPassPending = false;
-    this.switchPending = false;
     this.consumeTouchEdges();
-
     return frame;
+  }
+
+  /**
+   * Consume input for a simulation tick. Returns continuous state + ONE edge
+   * event from the queue. If multiple sim ticks run in one render frame, each
+   * gets its own edge (the first tick gets the first edge, subsequent ticks
+   * get the next or all-false). This ensures short button presses at 144 FPS
+   * are never lost.
+   */
+  consumeForSimulationTick(): InputFrame {
+    return this.getInput();
   }
 }

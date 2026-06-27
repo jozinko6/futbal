@@ -253,12 +253,13 @@ export function GameContainer() {
       const isPaused = pausedRef.current;
       if (!isPaused) {
         accRef.current += dt;
-        const input1 = input1Ref.current?.getInput();
-        const input2 = input2Ref.current?.getInput();
-        const inputs: InputFrame[] = [];
-        if (input1) inputs.push(input1);
-        if (input2) inputs.push(input2);
         while (accRef.current >= FIXED_DT) {
+          // Read input INSIDE the sim loop — each tick gets its own edge events.
+          const input1 = input1Ref.current?.consumeForSimulationTick();
+          const input2 = input2Ref.current?.consumeForSimulationTick();
+          const inputs: InputFrame[] = [];
+          if (input1) inputs.push(input1);
+          if (input2) inputs.push(input2);
           const prevScore = s.score.slice() as [number, number];
           const prevOwner = s.ball.ownerId;
           const prevPeriod = s.period;
