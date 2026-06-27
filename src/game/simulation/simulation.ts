@@ -215,6 +215,18 @@ function advanceMatchFlow(state: MatchState, dt: number): void {
       break;
     case 'play':
       state.timeMs += dt;
+      // Restart time limit: if a restart (throw-in/corner/free-kick) has been
+      // set up but not played for too long, force the ball live so play
+      // cannot stall indefinitely.
+      if (state.restartType != null && state.restartType !== 'kickoff') {
+        state.restartTimer -= dt;
+        if (state.restartTimer <= -5) {
+          // Force live: clear shield so anyone can contest.
+          state.ball.possessionShield = 0;
+          state.ball.shieldTeam = null;
+          state.restartType = null;
+        }
+      }
       if (state.half === 1 && state.timeMs >= state.halfLength) {
         state.period = 'halftime'; state.restartTimer = 3;
         state.banner = 'POLČAS'; state.bannerTimer = 3;
